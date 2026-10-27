@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7f8f7">
+    <meta name="description" content="Simulador de ingresos, gastos y deudas.">
+    <title>Finanzas</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="browser-model.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#plan">Ir al simulador</a>
+    <main class="main-shell" id="plan">
+      <header class="page-header">
+        <div class="header-title"><h1>Finanzas</h1><span class="badge" id="data-mode">Vacío</span></div>
+        <div class="toolbar-actions">
+          <label class="button ghost small import-button" for="import-file">Importar</label>
+          <input class="visually-hidden" type="file" id="import-file" accept="application/json,.json">
+          <button class="button ghost small" id="download" type="button">Exportar</button>
+          <button class="button ghost small" id="restore-plan" type="button" hidden>Recuperar</button>
+          <button class="button ghost small" id="reset" type="button">Vaciar</button>
+        </div>
+      </header>
+      <div class="error-banner" id="error" role="alert" hidden></div>
+      <div class="workspace-grid">
+        <aside class="controls-panel" aria-labelledby="controls-title">
+          <div class="panel-heading"><h2 id="controls-title">Datos</h2><span id="status" role="status" aria-live="polite">Cargando…</span></div>
+          <form id="controls" autocomplete="off"><div class="loading controls-loading" aria-label="Cargando"><span></span><span></span><span></span></div></form>
+        </aside>
+        <div class="results-column">
+          <div class="results-heading"><h2>Resumen</h2><label class="month-select-label" for="selected-month"><span class="visually-hidden">Mes</span><select id="selected-month" class="select-control" aria-label="Mes"><option>Cargando…</option></select></label></div>
+          <div id="kpis" class="kpis" aria-live="polite"><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div></div>
+          <section class="card chart-card" aria-labelledby="chart-title">
+            <div class="card-heading chart-heading"><div><h2 id="chart-title">Proyección</h2><p id="period-label"></p></div><div class="segmented" role="group" aria-label="Valor del gráfico"><button type="button" id="metric-flujo" aria-pressed="true">Flujo</button><button type="button" id="metric-saldo" aria-pressed="false">Saldo</button></div></div>
+            <div class="chart-legend" aria-label="Leyenda"><span><i class="legend-dot theme-a"></i><span id="legend-el">Yayo</span></span><span><i class="legend-dot theme-b"></i><span id="legend-ella">Fer</span></span><span class="chart-currency">EUR</span></div>
+            <div class="chart-stage"><div id="chart" aria-label="Gráfico mensual"><div class="chart-loading loading"><span></span></div></div><div id="chart-tooltip" role="tooltip" hidden></div></div>
+            <p class="chart-caption" id="chart-caption"></p>
+          </section>
+          <div id="insight" class="info-note" aria-live="polite"></div>
+          <details class="card comparison-card">
+            <summary class="card-summary"><h2>Comparar</h2></summary>
+            <div class="comparison-content"><div class="comparison-actions"><button class="button ghost small" id="save-reference" type="button">Guardar referencia</button></div><div id="comparison"></div></div>
+          </details>
+          <section class="card monthly-card" id="monthly" aria-labelledby="monthly-title"><div class="card-heading"><h2 id="monthly-title">Meses</h2><span class="muted">EUR</span></div><div class="table-wrap"><table id="monthly-table"><caption class="visually-hidden">Proyección mensual</caption><tbody><tr><td class="empty-state">Cargando…</td></tr></tbody></table></div></section>
+          <section class="card" id="agreement" aria-labelledby="agreement-title"><div class="card-heading"><h2 id="agreement-title">Reparto</h2></div><div id="month-detail"></div></section>
+          <section class="card" id="future" aria-labelledby="future-title"><div class="card-heading"><h2 id="future-title">Pagos fuera del período</h2></div><div id="commitments"></div></section>
+        </div>
+      </div>
+      <noscript><p class="error-banner">Activa JavaScript para usar el simulador.</p></noscript>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
