@@ -1,0 +1,94 @@
+# Finanzas en pareja
+
+Simulador mensual de ingresos, gastos, deudas y reglas de reparto para dos personas. Permite comparar cuánto dinero queda disponible para cada integrante y para el hogar.
+
+## Usar en el navegador
+
+[Abrir el simulador](https://yayop.github.io/finanzas/). No requiere instalar Python ni crear una cuenta. Siempre comienza con un plan vacío.
+
+El cálculo se ejecuta en el navegador con los mismos módulos Python de la versión local, mediante [Pyodide](https://pyodide.org/en/stable/). La primera carga descarga el motor desde jsDelivr y requiere conexión a Internet. Los importes y planes introducidos no se envían al servidor.
+
+Cada navegador conserva su propia copia. Para pasar un plan a otro computador, usar «Exportar» e «Importar».
+
+## Usar en el equipo local
+
+Requiere Python 3.9 o posterior, sin dependencias adicionales:
+
+```sh
+python3 scripts/servidor.py
+```
+
+Abrir [http://127.0.0.1:8765/](http://127.0.0.1:8765/). En macOS también se puede abrir `iniciar.command` con doble clic. Para otro puerto:
+
+```sh
+python3 scripts/servidor.py --port 8766
+```
+
+## Funcionamiento
+
+Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «Vaciar» vuelve a ese estado. «Recuperar» carga el último plan guardado en ese navegador.
+
+- Nombres editables para ambas personas.
+- Ingresos, gastos y deudas con conceptos libres en EUR o CLP.
+- Pagos únicos, recurrencias cada uno a doce meses y planes de cuotas.
+- Fechas de inicio y término, cuotas totales y cuotas ya pagadas.
+- Responsabilidad personal o compartida, independiente de quién realiza el pago.
+- Gastos compartidos según una regla general o porcentajes propios por movimiento.
+- Reparto 50/50, proporcional a ingresos, proporcional tras compromisos, igualdad de margen o porcentaje manual.
+- Inclusión opcional de ingresos extra en el cálculo del reparto.
+- Proyecciones de hasta 60 meses, gráficos, saldos y compensaciones entre ambas personas.
+- Compromisos posteriores al período proyectado.
+- Referencia para comparar cambios, exportación e importación de planes JSON.
+
+Los nombres iniciales son Yayo y Fer y pueden cambiarse en «Nombres». Por ejemplo, un gasto compartido de 100 EUR con un reparto 25/75 asigna 25 EUR a la primera persona y 75 EUR a la segunda, aunque cualquiera de las dos realice el pago. Bajo «Igualar margen», la compensación general puede redistribuir indirectamente el efecto de ese reparto.
+
+En cuotas, la fecha corresponde a la próxima cuota pendiente. Se puede introducir el total original a dividir entre todas las cuotas o el importe fijo de cada cuota. Las cuotas ya pagadas no vuelven a cobrarse. No se infieren capital pendiente ni intereses a partir de una cuota.
+
+## Datos y almacenamiento
+
+Los cambios válidos y la referencia se guardan en el almacenamiento local del navegador. Abrir o vaciar la pantalla no sobrescribe la copia anterior. Los planes no se sincronizan automáticamente entre computadores; se pueden transferir mediante «Exportar» e «Importar».
+
+El servidor local escucha únicamente en el propio equipo y no guarda los datos recibidos en archivos. Los archivos personales pueden conservarse en `datos/`, excluido de Git. También se excluyen resultados locales, credenciales y artefactos de `outputs/`.
+
+Los planes de la versión anterior se convierten al formato de movimientos conservando importes, fechas y repartos. Los gastos antes compartidos al 100 % pasan a «Compartido»; los personales parcialmente compartidos conservan su porcentaje. La copia anterior del navegador se mantiene.
+
+## Alcance del cálculo
+
+Los resultados son mensuales y previos a reservar ahorro. Los movimientos conservan su moneda original y se presentan en EUR, usando un tipo de cambio constante editable y sin comisiones. Los saldos iniciales se introducen en EUR.
+
+El modelo no comprueba la liquidez entre vencimientos dentro de un mes, no gestiona cuentas bancarias y no calcula derechos ni importes legales de prestaciones. Un saldo negativo indica dinero por cubrir; no genera un crédito automático.
+
+## Ejemplo ficticio
+
+El [caso de prueba](ejemplos/caso_ficticio.json) contiene datos ficticios para comprobar ingresos por etapas, monedas, gastos recurrentes y cuotas superpuestas. Sus importes, fechas, saldos y tipos de cambio son supuestos de prueba. No se carga automáticamente al abrir la interfaz.
+
+El [recorrido con resultados](docs/ejemplo_simulacion.md) explica el cálculo de ese caso. Se puede reproducir con:
+
+```sh
+python3 scripts/simular_ejemplo.py
+python3 scripts/simular_ejemplo.py --json
+```
+
+Para regenerar el documento:
+
+```sh
+python3 scripts/simular_ejemplo.py --markdown > docs/ejemplo_simulacion.md
+```
+
+## Comprobar el proyecto
+
+Las pruebas del modelo, la migración y el servidor usan Python. Las del editor y su integración con la API usan Node, sin dependencias adicionales.
+
+```sh
+python3 -m unittest discover -s pruebas
+node --test pruebas/interfaz.test.cjs
+node --test pruebas/browser-runtime.test.cjs
+```
+
+## Preparar la versión web
+
+```sh
+python3 scripts/preparar_pages.py
+```
+
+El comando genera `dist/` con una lista explícita de archivos públicos. No incluye archivos de `datos/`, `resultados/`, `outputs/` ni credenciales. GitHub Pages publica el contenido de la rama `gh-pages`; el código fuente está en `main`.

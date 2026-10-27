@@ -1,0 +1,22 @@
+# Datos personales y resultados locales
+/datos/
+/resultados/
+/outputs/
+
+# Credenciales
+.env
+.env.*
+!.env.example
+
+# Archivos del sistema y del editor
+.DS_Store
+.idea/
+.vscode/
+
+# Dependencias y compilación, si se incorporan
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.py[cod]

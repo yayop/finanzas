@@ -1,0 +1,48 @@
+{
+  "es_ficticio": true,
+  "descripcion": "Caso de prueba para definir el funcionamiento. No representa las finanzas reales de la pareja ni importes legales o cotizaciones vigentes.",
+  "inicio": "2026-11",
+  "fin": "2027-10",
+  "clp_por_eur": "1000",
+  "conversion": "Compra mensual prevista de los CLP necesarios con EUR, sin comisiones en este ejemplo; compensaciones entre la pareja en EUR.",
+  "personas": {
+    "el": {"nombre": "Yayo", "saldo_inicial_eur": "3000.00"},
+    "ella": {"nombre": "Fer", "saldo_inicial_eur": "1000.00"}
+  },
+  "ingresos": [
+    {"id": "sueldo_inicial", "persona": "el", "importe_eur": "2600.00", "desde": "2026-11", "hasta": "2026-12", "extra": false},
+    {"id": "chomage", "persona": "el", "importe_eur": "1500.00", "desde": "2027-01", "hasta": "2027-03", "extra": false},
+    {"id": "nuevo_sueldo", "persona": "el", "importe_eur": "2400.00", "desde": "2027-04", "hasta": "2027-10", "extra": false},
+    {"id": "doctorado", "persona": "ella", "importe_eur": "1800.00", "desde": "2026-11", "hasta": "2027-10", "extra": false},
+    {"id": "extra", "persona": "ella", "importe_eur": "300.00", "desde": "2026-11", "hasta": "2027-10", "extra": true}
+  ],
+  "gastos": [
+    {"id": "hogar", "importe_eur": "1500.00", "pagador": "el", "tipo": "comun", "desde": "2026-11", "hasta": "2027-10"},
+    {"id": "propios_el", "importe_eur": "200.00", "pagador": "el", "tipo": "personal", "desde": "2026-11", "hasta": "2027-10"},
+    {"id": "propios_ella", "importe_eur": "150.00", "pagador": "ella", "tipo": "personal", "desde": "2026-11", "hasta": "2027-10"}
+  ],
+  "deuda_fija": {
+    "id": "deuda_46_cuotas", "persona": "ella", "cuota_clp": 200000,
+    "cuotas_totales": 46, "cuotas_pagadas": 6, "proxima_cuota": "2026-11"
+  },
+  "ayuda": {
+    "id": "hermana", "persona": "ella", "importe_clp": 300000,
+    "desde": "2026-11", "hasta": "2027-03"
+  },
+  "facturas": [
+    {"id": "universidad_1", "persona": "ella", "importe_clp": 720000, "primera_cuota": "2026-11", "cuotas": 12},
+    {"id": "universidad_2", "persona": "ella", "importe_clp": 960000, "primera_cuota": "2027-01", "cuotas": 12},
+    {"id": "universidad_3", "persona": "ella", "importe_clp": 1200000, "primera_cuota": "2027-03", "cuotas": 12},
+    {"id": "universidad_4", "persona": "ella", "importe_clp": 1440000, "primera_cuota": "2027-05", "cuotas": 12}
+  ],
+  "escenarios": [
+    {"id": "A", "nombre": "Comunes 50/50; deudas personales", "regla": "mitades", "incluir_extra": true, "universidad_compartida": false},
+    {"id": "B", "nombre": "Comunes y universidad 50/50", "regla": "mitades", "incluir_extra": true, "universidad_compartida": true},
+    {"id": "C", "nombre": "Proporcional incluyendo extras", "regla": "proporcional", "incluir_extra": true, "universidad_compartida": false},
+    {"id": "D", "nombre": "Proporcional excluyendo extras", "regla": "proporcional", "incluir_extra": false, "universidad_compartida": false},
+    {"id": "E", "nombre": "Igualar todo el flujo libre", "regla": "igualar", "incluir_extra": true, "universidad_compartida": false},
+    {"id": "F", "nombre": "Igualar margen preservando extras", "regla": "igualar", "incluir_extra": false, "universidad_compartida": false},
+    {"id": "G", "nombre": "50/50 con universidad en 6 cuotas", "regla": "mitades", "incluir_extra": true, "universidad_compartida": false, "cuotas_universidad": 6},
+    {"id": "H", "nombre": "50/50 manteniendo empleo en enero a marzo", "regla": "mitades", "incluir_extra": true, "universidad_compartida": false, "sustituir_chomage_por_eur": "2600.00"}
+  ]
+}
