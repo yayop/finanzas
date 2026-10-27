@@ -6,9 +6,10 @@
     <meta name="theme-color" content="#f7f8f7">
     <meta name="description" content="Simulador de ingresos, gastos y deudas.">
     <title>Finanzas</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="browser-model.js" defer></script>
-    <script src="app.js" defer></script>
+    <link rel="stylesheet" href="styles.css?v=56858b4d35da">
+    <script src="operativa.js?v=56858b4d35da" defer></script>
+    <script src="browser-model.js?v=56858b4d35da" defer></script>
+    <script src="app.js?v=56858b4d35da" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#plan">Ir al simulador</a>
@@ -24,7 +25,13 @@
         </div>
       </header>
       <div class="error-banner" id="error" role="alert" hidden></div>
-      <div class="workspace-grid">
+      <nav class="workspace-tabs" role="tablist" aria-label="Vistas del plan">
+        <button type="button" id="tab-projection" role="tab" data-tab="projection" aria-controls="panel-projection" aria-selected="true">Proyección</button>
+        <button type="button" id="tab-operations" role="tab" data-tab="operations" aria-controls="panel-operations" aria-selected="false" tabindex="-1">Operativa</button>
+        <button type="button" id="tab-adjustments" role="tab" data-tab="adjustments" aria-controls="panel-adjustments" aria-selected="false" tabindex="-1">Ajustes</button>
+      </nav>
+      <section id="panel-projection" class="tab-panel" role="tabpanel" aria-labelledby="tab-projection">
+       <div class="workspace-grid">
         <aside class="controls-panel" aria-labelledby="controls-title">
           <div class="panel-heading"><h2 id="controls-title">Datos</h2><span id="status" role="status" aria-live="polite">Cargando…</span></div>
           <form id="controls" autocomplete="off"><div class="loading controls-loading" aria-label="Cargando"><span></span><span></span><span></span></div></form>
@@ -33,9 +40,11 @@
           <div class="results-heading"><h2>Resumen</h2><label class="month-select-label" for="selected-month"><span class="visually-hidden">Mes</span><select id="selected-month" class="select-control" aria-label="Mes"><option>Cargando…</option></select></label></div>
           <div id="kpis" class="kpis" aria-live="polite"><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div></div>
           <section class="card chart-card" aria-labelledby="chart-title">
-            <div class="card-heading chart-heading"><div><h2 id="chart-title">Proyección</h2><p id="period-label"></p></div><div class="segmented" role="group" aria-label="Valor del gráfico"><button type="button" id="metric-flujo" aria-pressed="true">Flujo</button><button type="button" id="metric-saldo" aria-pressed="false">Saldo</button></div></div>
-            <div class="chart-legend" aria-label="Leyenda"><span><i class="legend-dot theme-a"></i><span id="legend-el">Yayo</span></span><span><i class="legend-dot theme-b"></i><span id="legend-ella">Fer</span></span><span class="chart-currency">EUR</span></div>
+            <div class="card-heading chart-heading"><div><h2 id="chart-title">Proyección</h2><p id="period-label"></p></div><div class="chart-controls"><label class="chart-view-label" for="chart-view"><span class="visually-hidden">Perspectiva del gráfico</span><select id="chart-view" aria-label="Perspectiva del gráfico"><option value="personas">Personas</option><option value="grupos">Grupos</option><option value="etiquetas">Etiquetas</option></select></label><div class="segmented" role="group" aria-label="Valor del gráfico"><button type="button" id="metric-flujo" aria-pressed="true">Flujo</button><button type="button" id="metric-saldo" aria-pressed="false">Saldo</button></div></div></div>
+            <div class="chart-legend" id="people-legend" aria-label="Leyenda"><span><i class="legend-dot theme-a"></i><span id="legend-el">Yayo</span></span><span><i class="legend-dot theme-b"></i><span id="legend-ella">Fer</span></span><span class="chart-currency">EUR</span></div>
+            <div class="chart-legend chart-group-legend" id="chart-groups" aria-label="Grupos del gráfico" hidden></div>
             <div class="chart-stage"><div id="chart" aria-label="Gráfico mensual"><div class="chart-loading loading"><span></span></div></div><div id="chart-tooltip" role="tooltip" hidden></div></div>
+            <div id="chart-annotations" class="chart-annotations"></div>
             <p class="chart-caption" id="chart-caption"></p>
           </section>
           <div id="insight" class="info-note" aria-live="polite"></div>
@@ -47,7 +56,14 @@
           <section class="card" id="agreement" aria-labelledby="agreement-title"><div class="card-heading"><h2 id="agreement-title">Reparto</h2></div><div id="month-detail"></div></section>
           <section class="card" id="future" aria-labelledby="future-title"><div class="card-heading"><h2 id="future-title">Pagos fuera del período</h2></div><div id="commitments"></div></section>
         </div>
-      </div>
+       </div>
+      </section>
+      <section id="panel-operations" class="tab-panel" role="tabpanel" aria-labelledby="tab-operations" hidden>
+        <div id="operations-content" class="operations-layout"></div>
+      </section>
+      <section id="panel-adjustments" class="tab-panel" role="tabpanel" aria-labelledby="tab-adjustments" hidden>
+        <div id="adjustments-content"></div>
+      </section>
       <noscript><p class="error-banner">Activa JavaScript para usar el simulador.</p></noscript>
     </main>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

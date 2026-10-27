@@ -4,6 +4,7 @@
 
   const nativeFetch = window.fetch.bind(window);
   const workerURL = new URL("model-worker.js", document.currentScript.src);
+  workerURL.search = new URL(document.currentScript.src).search;
   const pending = new Map();
   let worker = null;
   let sequence = 0;

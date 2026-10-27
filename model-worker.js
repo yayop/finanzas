@@ -2,6 +2,7 @@
 const PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
 const FILES = [
   ["python/modelo.py", "/finanzas/scripts/modelo.py"],
+  ["python/operativa.py", "/finanzas/scripts/operativa.py"],
   ["python/migracion.py", "/finanzas/scripts/migracion.py"],
   ["python/simular_ejemplo.py", "/finanzas/scripts/simular_ejemplo.py"],
   ["ejemplos/caso_ficticio.json", "/finanzas/ejemplos/caso_ficticio.json"]
@@ -53,7 +54,7 @@ async function createRuntime() {
   const [{loadPyodide}, sources] = await Promise.all([
     import(PYODIDE_URL + "pyodide.mjs"),
     Promise.all(FILES.map(async ([asset, filename]) => {
-      const response = await fetch(new URL(asset, self.location.href));
+      const response = await fetch(new URL(asset, self.location.href), {cache: "no-store"});
       if (!response.ok) throw new Error("No se pudo cargar " + asset);
       return [filename, await response.text()];
     }))
