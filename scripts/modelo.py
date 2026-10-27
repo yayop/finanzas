@@ -126,6 +126,14 @@ def _fx(caso, mes):
     return numero
 
 
+def _operativa_modulo():
+    try:
+        from . import operativa
+    except ImportError:
+        import operativa
+    return operativa
+
+
 def _preparar(caso, escenario):
     if not isinstance(caso, dict):
         raise ValueError("caso debe ser un objeto")
@@ -167,6 +175,14 @@ def _preparar(caso, escenario):
             raise ValueError("Hay id de movimiento duplicados: " + identificador)
         identificadores.add(identificador)
         _texto(movimiento.get("concepto"), "concepto de " + identificador)
+        grupo = movimiento.get("grupo", "")
+        if not isinstance(grupo, str) or len(grupo) > 80:
+            raise ValueError("grupo debe ser texto de hasta 80 caracteres")
+        movimiento["grupo"] = grupo.strip()
+        etiquetas = movimiento.get("etiquetas", [])
+        if not isinstance(etiquetas, list) or len(etiquetas) > 10:
+            raise ValueError("etiquetas debe ser una lista de hasta 10 textos")
+        movimiento["etiquetas"] = [_texto(etiqueta, "etiqueta", 80).strip() for etiqueta in etiquetas]
         if movimiento.get("tipo") not in ("ingreso", "gasto", "deuda"):
             raise ValueError("tipo de {} debe ser ingreso, gasto o deuda".format(identificador))
         conjunta = movimiento.get("persona") == "compartido"
@@ -229,6 +245,7 @@ def _preparar(caso, escenario):
     _booleano(escenario.get("incluir_extra"), "incluir_extra")
     if escenario["regla"] == "manual":
         _porcentaje(escenario.get("porcentaje_el"), "porcentaje_el")
+    _operativa_modulo().preparar_operativa(caso, movimientos)
     return movimientos, escenario
 
 
@@ -336,9 +353,15 @@ def simular_plan(caso, escenario):
     """Proyecta el plan sin modificarlo; pagos excluye los ingresos recibidos."""
     movimientos, escenario = _preparar(caso, escenario)
     calendario, compromisos = _calendario(caso, movimientos)
+    op_modulo = _operativa_modulo()
+    preparado = op_modulo.preparar_operativa(caso, movimientos)
+    operativa = op_modulo.simular_operativa(caso, preparado, calendario) if preparado["activa"] else None
     saldos = {p: _importe(caso["personas"][p]["saldo_inicial_eur"], "EUR", "saldo inicial", negativo=True) for p in PERSONAS}
+    iniciales_cuentas = op_modulo.saldos_iniciales_cuentas(caso, preparado)
+    for persona in PERSONAS:
+        saldos[persona] += iniciales_cuentas[persona]
     iniciales, meses = dict(saldos), []
-    for mes, sucesos in calendario.items():
+    for indice_mes, (mes, sucesos) in enumerate(calendario.items()):
         tipo_cambio = _fx(caso, mes)
         reales, considerados = _cero(), _cero()
         externos, personales = _cero(), _cero()
@@ -358,6 +381,12 @@ def simular_plan(caso, escenario):
                         "porcentaje_compartido": str(porcentaje),
                         "importe_comun_centimos_eur": compartido,
                         "importe_personal_centimos_eur": equivalente - compartido}
+            if movimiento.get("grupo"):
+                registro["grupo"] = movimiento["grupo"]
+            if movimiento.get("etiquetas"):
+                registro["etiquetas"] = list(movimiento["etiquetas"])
+            if movimiento.get("cuenta_id"):
+                registro["cuenta_id"] = movimiento["cuenta_id"]
             persona, pagador = movimiento["persona"], movimiento["pagador"]
             if movimiento["tipo"] == "ingreso":
                 registro["extra"] = movimiento["extra"]
@@ -394,7 +423,9 @@ def simular_plan(caso, escenario):
         compensacion = {p: externos[p] - personales[p] - asignacion[p] for p in PERSONAS}
         flujo = {p: reales[p] - externos[p] + compensacion[p] for p in PERSONAS}
         anteriores = dict(saldos)
-        saldos = {p: saldos[p] + flujo[p] for p in PERSONAS}
+        caja = operativa["meses"][indice_mes] if operativa else None
+        ajuste = {p: caja["revalorizacion_centimos_eur"][p] + caja["redondeo_conversion_centimos_eur"][p] if caja else 0 for p in PERSONAS}
+        saldos = {p: saldos[p] + flujo[p] + ajuste[p] for p in PERSONAS}
         fila = {"mes": mes, "clp_por_eur": str(tipo_cambio), "ingresos_reales_centimos_eur": reales,
                 "ingresos_considerados_centimos_eur": considerados, "pagos_personales_centimos_eur": personales,
                 "gastos_comunes_centimos_eur": comunes, "asignacion_comunes_centimos_eur": asignacion,
@@ -404,6 +435,8 @@ def simular_plan(caso, escenario):
                 "coste_compra_clp_centimos_eur": costes_compras,
                 "necesita_financiacion": {p: saldos[p] < 0 for p in PERSONAS}, "pagos": pagos, "ingresos": ingresos,
                 "cuotas_centimos_eur": cuotas_eur, "cuotas_clp": cuotas_clp}
+        if operativa:
+            fila["ajuste_cuentas_centimos_eur"] = ajuste
         for tipo in ("universidad", "ayuda", "deuda_fija"):
             seleccion = [p for p in pagos if p.get("origen_tipo") == tipo]
             fila[tipo + "_clp"] = sum(p["importe_original"] for p in seleccion if p["moneda_original"] == "CLP")
@@ -419,11 +452,17 @@ def simular_plan(caso, escenario):
     for campo in ("cuotas_clp", "cuotas_centimos_eur", "universidad_clp", "ayuda_clp", "deuda_fija_clp", "gastos_comunes_centimos_eur"):
         totales[campo] = sum(fila[campo] for fila in meses)
     totales["saldo_inicial_centimos_eur"], totales["saldo_final_centimos_eur"] = iniciales, dict(saldos)
+    if operativa:
+        totales["ajuste_cuentas_centimos_eur"] = {p: sum(fila["ajuste_cuentas_centimos_eur"][p] for fila in meses) for p in PERSONAS}
     totales["hogar"] = {campo: sum(totales[campo].values()) for campo in (
         "ingresos_reales_centimos_eur", "pagos_externos_centimos_eur", "flujo_libre_centimos_eur", "saldo_inicial_centimos_eur", "saldo_final_centimos_eur")}
     resultado = {"version": 2, "es_ficticio": caso["es_ficticio"], "escenario": escenario,
                  "unidad_eur": "centimos_enteros", "inicio": caso["inicio"], "fin": caso["fin"],
                  "conversion": "Equivalencia de cada ingreso y pago CLP en EUR al tipo de su mes, sin comisiones. Compensaciones EUR; no se modelan cuentas CLP separadas.",
                  "meses": meses, "totales": totales, "compromisos_fuera_horizonte": compromisos}
+    if operativa:
+        op_modulo.incorporar_compensaciones(operativa, meses)
+        resultado["operativa"] = operativa
+        resultado["conversion"] = "Cuentas en moneda original, valoradas al cambio de cada mes; revalorización y redondeos separados del flujo. Transferencias sin comisiones, compensaciones del acuerdo pendientes hasta planificarlas."
     _comprobar_enteros(resultado)
     return resultado

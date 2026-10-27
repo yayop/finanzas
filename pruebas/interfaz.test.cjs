@@ -3,13 +3,15 @@
 const {test, before, after} = require("node:test");
 const assert = require("node:assert/strict");
 const {spawn} = require("node:child_process");
-const {readFileSync} = require("node:fs");
+const {readFileSync, existsSync} = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const {webcrypto} = require("node:crypto");
 
 const root = path.resolve(__dirname, "..");
 const source = readFileSync(path.join(root, "web/app.js"), "utf8").replace(/\binitialize\(\);\s*$/, "");
+const operationPath = path.join(root, "web/operativa.js");
+const operationSource = existsSync(operationPath) ? readFileSync(operationPath, "utf8") : "";
 const legacyCase = JSON.parse(readFileSync(path.join(root, "ejemplos/caso_ficticio.json"), "utf8"));
 const copy = (value) => JSON.parse(JSON.stringify(value));
 let server, baseURL;
@@ -37,22 +39,31 @@ after(() => { server?.kill(); });
 // The stub checks application wiring and API results; visual layout is outside this test.
 function createApp(saved = {}) {
   const nodes = new Map(), storage = new Map(Object.entries(saved)), timers = new Map();
+  let document;
   let timerId = 0;
   function node(selector) {
     if (nodes.has(selector)) return nodes.get(selector);
     const classes = new Set();
-    const value = {innerHTML: "", textContent: "", hidden: true, value: "", dataset: {}, style: {},
+    const value = {selector, innerHTML: "", textContent: "", hidden: true, value: "", dataset: {}, style: {},
       classList: {add: (...items) => items.forEach((item) => classes.add(item)), remove: (...items) => items.forEach((item) => classes.delete(item)), contains: (item) => classes.has(item)},
       listeners: new Map(),
       setAttribute(name, value) { this[name] = String(value); },
       addEventListener(name, callback) { const callbacks = this.listeners.get(name) || []; callbacks.push(callback); this.listeners.set(name, callbacks); }, checkValidity: () => true,
-      focus() {}, select() {}, click() {}, closest: () => null,
+      focus() { document.activeElement = this; }, select() {}, click() {}, closest: () => null,
+      contains(other) { return Boolean(other && (other === this || other.selector?.startsWith(selector + " "))); },
+      matches(query) { return query === "[data-op-month]" && this.dataset.opMonth !== undefined; },
       querySelector: (child) => node(selector + " " + child), querySelectorAll: () => []};
     nodes.set(selector, value);
     return value;
   }
+  document = {querySelector: node, querySelectorAll: (selector) => {
+    if (selector === "[data-tab]") return ["projection", "operations", "adjustments"].map((name) => {
+      const tab = node("#tab-" + name); tab.dataset.tab = name; return tab;
+    });
+    return [];
+  }, activeElement: null, body: node("body"), createElement: (tag) => node("created-" + tag)};
   const context = vm.createContext({
-    document: {querySelector: node, querySelectorAll: () => [], body: node("body"), createElement: (tag) => node("created-" + tag)},
+    document,
     window: {innerWidth: 1200},
     localStorage: {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value))},
     fetch: (url, options) => fetch(new URL(url, baseURL), options), crypto: webcrypto,
@@ -60,7 +71,8 @@ function createApp(saved = {}) {
     setTimeout: (callback) => { timers.set(++timerId, callback); return timerId; },
     clearTimeout: (id) => timers.delete(id)
   });
-  vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan};", context, {filename: "web/app.js"});
+  if (operationSource) vm.runInContext(operationSource, context, {filename: "web/operativa.js"});
+  vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan, handleAdjustment, setTab, expenseSeries, chartData};", context, {filename: "web/app.js"});
   return {...context.app, nodes, storage};
 }
 
@@ -75,8 +87,8 @@ async function loadExample(app) {
   await fire(app, "#save-reference");
 }
 
-function edit(app, index, property, value) {
-  const input = {dataset: {path: `caso.movimientos.${index}.${property}`, kind: typeof value === "boolean" ? "boolean" : typeof value === "number" ? "integer" : "string"}, value: String(value), checked: value, type: "text", closest: (selector) => selector === "[data-path]" ? input : null};
+function edit(app, index, property, value, options = {}) {
+  const input = {dataset: {path: `caso.movimientos.${index}.${property}`, kind: options.kind || (typeof value === "boolean" ? "boolean" : typeof value === "number" ? "integer" : "string")}, value: String(value), checked: value, type: options.type || "text", tagName: options.tagName || "INPUT", closest: (selector) => selector === "[data-path]" ? input : null};
   app.handleControl({target: input});
 }
 
@@ -92,6 +104,30 @@ function action(app, selector, dataset = {}) {
 
 function row(app, month = "2026-11") {
   return app.state.result.meses.find((item) => item.mes === month);
+}
+
+function movement(id, overrides = {}) {
+  return {id, concepto: id, tipo: "gasto", persona: "compartido", pagador: "el", importe: "100.00", moneda: "EUR", fecha: "2026-11-01", modalidad: "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: "100", reparto: "fijo", porcentaje_el: "50", grupo: "", etiquetas: [], cuenta_id: "", ...overrides};
+}
+
+function plan(movements, accounts = []) {
+  return {version: 2, caso: {version: 2, es_ficticio: true, inicio: "2026-11", fin: "2027-01", clp_por_eur: "1000", personas: {el: {nombre: "Yayo", saldo_inicial_eur: "0.00"}, ella: {nombre: "Fer", saldo_inicial_eur: "0.00"}}, movimientos: movements, cuentas: accounts, transferencias: []}, escenario: {id: "test", nombre: "50/50", regla: "mitades", incluir_extra: true, porcentaje_el: "50"}};
+}
+
+function incomes() {
+  return [movement("sueldo-yayo", {tipo: "ingreso", persona: "el", importe: "1000.00", porcentaje_compartido: "0"}), movement("sueldo-fer", {tipo: "ingreso", persona: "ella", pagador: "ella", importe: "1000.00", porcentaje_compartido: "0"})];
+}
+
+async function loadPlan(app, input) {
+  await app.initialize();
+  const text = JSON.stringify(input);
+  await app.importPlan({size: text.length, text: async () => text});
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+}
+
+function adjust(app, index, percentage) {
+  const input = {dataset: {adjustIndex: String(index)}, type: "range", value: String(percentage), closest: (selector) => selector === "[data-adjust-index]" ? input : null};
+  app.handleAdjustment({target: input});
 }
 
 test("cada apertura inicia vacía, con saldos en cero y sin movimientos", async () => {
@@ -401,4 +437,148 @@ test("los repartos parciales existentes se conservan al abrir el editor", async 
   assert.deepEqual(copy(after.meses.map((item) => item.flujo_libre_centimos_eur)), copy(before.meses.map((item) => item.flujo_libre_centimos_eur)));
   assert.equal(after.meses[0].flujo_libre_centimos_eur.el, 162375);
   assert.equal(after.meses[0].flujo_libre_centimos_eur.ella, 66625);
+});
+
+test("el slider redistribuye un gasto sin cambiar quién paga, su cuenta ni el costo del hogar", async () => {
+  const app = createApp();
+  const accounts = [{id: "banco-yayo", nombre: "Cuenta Yayo", titular: "el", moneda: "EUR", saldo_inicial: "0.00", porcentaje_el: "50"}];
+  await loadPlan(app, plan([...incomes(), movement("internet", {porcentaje_el: "25", cuenta_id: "banco-yayo"})], accounts));
+  const before = copy(row(app));
+  const index = app.state.caso.movimientos.findIndex((item) => item.id === "internet");
+  adjust(app, index, 80);
+  await app.calculate();
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+  const changed = app.state.caso.movimientos[index], after = row(app);
+  assert.equal(changed.persona, "compartido");
+  assert.equal(changed.reparto, "fijo");
+  assert.equal(changed.porcentaje_el, "80");
+  assert.equal(changed.pagador, "el");
+  assert.equal(changed.cuenta_id, "banco-yayo");
+  assert.equal(changed.importe, "100.00");
+  assert.deepEqual(copy(after.flujo_libre_centimos_eur), {el: 92000, ella: 98000});
+  assert.equal(after.hogar.flujo_libre_centimos_eur, before.hogar.flujo_libre_centimos_eur);
+  assert.equal(after.hogar.saldo_final_centimos_eur, before.hogar.saldo_final_centimos_eur);
+  assert.deepEqual(copy(after.pagos_externos_centimos_eur), before.pagos_externos_centimos_eur);
+  const restored = createApp(Object.fromEntries(app.storage));
+  await restored.initialize();
+  await restored.restoreSavedPlan();
+  assert.equal(restored.state.caso.movimientos[index].porcentaje_el, "80");
+  assert.deepEqual(copy(row(restored).flujo_libre_centimos_eur), copy(after.flujo_libre_centimos_eur));
+});
+
+test("el slider de una deuda personal cambia solo la parte compartida y conserva titular y cuenta", async () => {
+  const app = createApp();
+  const accounts = [{id: "banco-fer", nombre: "Cuenta Fer", titular: "ella", moneda: "EUR", saldo_inicial: "0.00", porcentaje_el: "50"}];
+  await loadPlan(app, plan([...incomes(), movement("deuda-personal", {
+    tipo: "deuda", persona: "ella", pagador: "ella", cuenta_id: "banco-fer",
+    modalidad: "cuotas", importe_tipo: "cuota", cuotas: 3,
+    porcentaje_compartido: "20", reparto: "regla"
+  })], accounts));
+  const before = copy(row(app));
+  assert.deepEqual(before.flujo_libre_centimos_eur, {el: 99000, ella: 91000});
+  adjust(app, 2, 80);
+  await app.calculate();
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+  const debt = app.state.caso.movimientos[2], after = row(app);
+  assert.equal(debt.porcentaje_compartido, "80");
+  assert.equal(debt.persona, "ella");
+  assert.equal(debt.pagador, "ella");
+  assert.equal(debt.cuenta_id, "banco-fer");
+  assert.equal(debt.reparto, "regla");
+  assert.equal(debt.importe, "100.00");
+  assert.deepEqual(copy(after.flujo_libre_centimos_eur), {el: 96000, ella: 94000});
+  assert.deepEqual(copy(after.pagos_externos_centimos_eur), before.pagos_externos_centimos_eur);
+  assert.equal(after.hogar.flujo_libre_centimos_eur, before.hogar.flujo_libre_centimos_eur);
+  assert.equal(after.hogar.saldo_final_centimos_eur, before.hogar.saldo_final_centimos_eur);
+});
+
+test("pagar desde la otra cuenta cambia la caja y la compensación pero conserva el acuerdo", async () => {
+  const app = createApp();
+  const accounts = ["el", "ella"].map((person) => ({id: "banco-" + person, nombre: "Cuenta " + person, titular: person, moneda: "EUR", saldo_inicial: "0.00", porcentaje_el: "50"}));
+  const salaries = incomes().map((item) => ({...item, cuenta_id: "banco-" + item.persona}));
+  await loadPlan(app, plan([...salaries, movement("arriendo", {cuenta_id: "banco-el"})], accounts));
+  const before = copy(row(app));
+  assert.deepEqual(before.compensacion_neta_centimos_eur, {el: 5000, ella: -5000});
+  edit(app, 2, "cuenta_id", "banco-ella", {tagName: "SELECT"});
+  await app.calculate();
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+  const after = row(app);
+  assert.equal(app.state.caso.movimientos[2].pagador, "ella");
+  assert.deepEqual(copy(after.compensacion_neta_centimos_eur), {el: -5000, ella: 5000});
+  assert.deepEqual(copy(after.pagos_externos_centimos_eur), {el: 0, ella: 10000});
+  assert.deepEqual(copy(after.flujo_libre_centimos_eur), before.flujo_libre_centimos_eur);
+  assert.deepEqual(copy(after.saldo_final_centimos_eur), before.saldo_final_centimos_eur);
+  const operational = app.state.result.operativa.meses[0];
+  assert.equal(operational.cuentas.find((item) => item.cuenta_id === "banco-el").saldo_final_unidades, 100000);
+  assert.equal(operational.cuentas.find((item) => item.cuenta_id === "banco-ella").saldo_final_unidades, 90000);
+  assert.deepEqual(copy(operational.compensacion_pendiente_centimos_eur), {el: -5000, ella: 5000});
+});
+
+test("los grupos y etiquetas siguen importes y calendarios, se conservan al importar y excluyen ingresos", async () => {
+  const app = createApp();
+  const salaries = incomes().map((item) => ({...item, grupo: "Hogar", etiquetas: ["fijo"]}));
+  await loadPlan(app, plan([...salaries,
+    movement("arriendo", {importe: "900.00", grupo: "Hogar", etiquetas: ["fijo", "esencial"]}),
+    movement("internet", {importe: "100.00", intervalo_meses: 2, grupo: "Hogar"}),
+    movement("matrícula", {importe: "100000", moneda: "CLP", fecha: "2026-12-02", modalidad: "unico", grupo: "Estudios", etiquetas: ["universidad"]})
+  ]));
+  edit(app, 3, "etiquetas", "fijo, internet, fijo,  ", {kind: "csv"});
+  await app.calculate();
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+  assert.deepEqual(copy(app.state.caso.movimientos[3].etiquetas), ["fijo", "internet"]);
+  const groups = app.expenseSeries("grupos");
+  assert.deepEqual(copy(groups.find((item) => item.label === "Hogar").values), [100000, 90000, 100000]);
+  assert.deepEqual(copy(groups.find((item) => item.label === "Estudios").values), [0, 10000, 0]);
+  assert.equal(groups.some((item) => item.label.includes("sueldo")), false);
+  const tags = app.expenseSeries("etiquetas");
+  assert.deepEqual(copy(tags.find((item) => item.label === "fijo").values), [100000, 90000, 100000]);
+  assert.deepEqual(copy(tags.find((item) => item.label === "internet").values), [10000, 0, 10000]);
+  app.state.metric = "saldo";
+  assert.deepEqual(copy(app.expenseSeries("grupos").find((item) => item.label === "Hogar").values), [100000, 190000, 290000]);
+  const serialized = JSON.stringify({version: 2, caso: app.state.caso, escenario: app.state.escenario});
+  const imported = createApp();
+  await imported.initialize();
+  await imported.importPlan({size: serialized.length, text: async () => serialized});
+  assert.deepEqual(copy(imported.state.caso.movimientos[3].etiquetas), ["fijo", "internet"]);
+  assert.equal(imported.state.caso.movimientos[3].grupo, "Hogar");
+  assert.deepEqual(copy(imported.expenseSeries("grupos").find((item) => item.label === "Hogar").values), [100000, 90000, 100000]);
+});
+
+test("el saldo de cada cuenta se suma una sola vez al dinero sin cuenta y permanece al recuperar", async () => {
+  const app = createApp();
+  const input = plan([], [
+    {id: "personal", nombre: "Banco", titular: "el", moneda: "EUR", saldo_inicial: "100.00", porcentaje_el: "50"},
+    {id: "común", nombre: "Fondo común", titular: "compartido", moneda: "CLP", saldo_inicial: "200000", porcentaje_el: "25"}
+  ]);
+  input.caso.personas.el.saldo_inicial_eur = "10.00";
+  input.caso.personas.ella.saldo_inicial_eur = "20.00";
+  await loadPlan(app, input);
+  assert.deepEqual(copy(row(app).saldo_inicial_centimos_eur), {el: 16000, ella: 17000});
+  assert.equal(row(app).hogar.saldo_final_centimos_eur, 33000);
+  const restored = createApp(Object.fromEntries(app.storage));
+  await restored.initialize();
+  await restored.restoreSavedPlan();
+  assert.equal(Number(restored.state.caso.personas.el.saldo_inicial_eur), 10);
+  assert.equal(Number(restored.state.caso.personas.ella.saldo_inicial_eur), 20);
+  assert.equal(row(restored).hogar.saldo_final_centimos_eur, 33000);
+  assert.equal(row(restored, "2027-01").hogar.saldo_final_centimos_eur, 33000);
+});
+
+test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la referencia", async () => {
+  const app = createApp();
+  await loadExample(app);
+  const planBefore = copy({caso: app.state.caso, escenario: app.state.escenario, reference: app.state.reference});
+  const resultBefore = copy(app.state.result);
+  for (const tab of ["operations", "adjustments", "projection"]) {
+    app.setTab(tab);
+    assert.equal(app.nodes.get("#tab-" + tab)["aria-selected"], "true");
+    for (const panel of ["projection", "operations", "adjustments"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
+  }
+  app.state.chartView = "grupos";
+  app.chartData();
+  app.state.chartView = "etiquetas";
+  app.chartData();
+  assert.deepEqual(copy({caso: app.state.caso, escenario: app.state.escenario, reference: app.state.reference}), planBefore);
+  assert.deepEqual(copy(app.state.result), resultBefore);
+  assert.equal(app.state.tab, "projection");
 });

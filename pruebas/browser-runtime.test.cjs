@@ -11,7 +11,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const transportSource = readFileSync(path.join(root, "web/browser-model.js"), "utf8");
 
-function browserTransport({workerFailure} = {}) {
+function browserTransport({workerFailure, revision = ""} = {}) {
   const workers = [], network = [], timers = new Map();
   let timerID = 0;
   class Worker {
@@ -39,7 +39,7 @@ function browserTransport({workerFailure} = {}) {
     return new Response("asset");
   }};
   const context = vm.createContext({
-    window, document: {baseURI: "https://example.github.io/finanzas/", currentScript: {src: "https://example.github.io/finanzas/browser-model.js"}},
+    window, document: {baseURI: "https://example.github.io/finanzas/", currentScript: {src: "https://example.github.io/finanzas/browser-model.js" + revision}},
     Worker, URL, Response, DOMException,
     setTimeout(callback) { timers.set(++timerID, callback); return timerID; },
     clearTimeout(id) { timers.delete(id); }
@@ -167,12 +167,12 @@ test("un error al crear el Worker limpia el temporizador", async () => {
   assert.equal(browser.network.length, 0);
 });
 
-test("el build estático incluye solo archivos permitidos y carga el transporte antes del editor", () => {
+test("el build estático incluye solo archivos permitidos y carga operativa y transporte antes del editor", () => {
   const temporary = mkdtempSync(path.join(tmpdir(), "finanzas-pages-test-"));
   try {
     const assets = [
-      ...["index.html", "styles.css", "app.js", "browser-model.js", "model-worker.js"].map((name) => "web/" + name),
-      ...["modelo.py", "migracion.py", "simular_ejemplo.py"].map((name) => "scripts/" + name),
+      ...["index.html", "styles.css", "app.js", "operativa.js", "browser-model.js", "model-worker.js"].map((name) => "web/" + name),
+      ...["modelo.py", "operativa.py", "migracion.py", "simular_ejemplo.py"].map((name) => "scripts/" + name),
       "ejemplos/caso_ficticio.json"
     ];
     for (const asset of assets) {
@@ -190,14 +190,28 @@ test("el build estático incluye solo archivos permitidos y carga el transporte 
     function files(directory) {
       return readdirSync(directory, {withFileTypes: true}).flatMap((entry) => entry.isDirectory() ? files(path.join(directory, entry.name)).map((name) => entry.name + "/" + name) : [entry.name]).sort();
     }
-    assert.deepEqual(files(dist), [".nojekyll", "app.js", "browser-model.js", "ejemplos/caso_ficticio.json", "index.html", "model-worker.js", "python/migracion.py", "python/modelo.py", "python/simular_ejemplo.py", "styles.css"]);
+    assert.deepEqual(files(dist), [".nojekyll", "app.js", "browser-model.js", "ejemplos/caso_ficticio.json", "index.html", "model-worker.js", "operativa.js", "python/migracion.py", "python/modelo.py", "python/operativa.py", "python/simular_ejemplo.py", "styles.css"]);
     const html = readFileSync(path.join(dist, "index.html"), "utf8");
-    const transport = '<script src="browser-model.js" defer></script>';
-    const app = '<script src="app.js" defer></script>';
+    const version = html.match(/browser-model\.js\?v=([a-f0-9]{12})/)[1];
+    const transport = `<script src="browser-model.js?v=${version}" defer></script>`;
+    const operations = `<script src="operativa.js?v=${version}" defer></script>`;
+    const app = `<script src="app.js?v=${version}" defer></script>`;
     assert.ok(html.includes(transport));
+    assert.ok(html.includes(operations));
     assert.ok(html.indexOf(transport) < html.indexOf(app));
-    assert.doesNotMatch(html, /(?:src|href)="\/(?:app\.js|styles\.css|browser-model\.js)/);
+    assert.ok(html.indexOf(operations) < html.indexOf(app));
+    assert.doesNotMatch(html, /(?:src|href)="\/(?:app\.js|styles\.css|browser-model\.js|operativa\.js)/);
   } finally {
     rmSync(temporary, {recursive: true, force: true});
   }
+});
+
+
+test("el Worker conserva la versión del despliegue para evitar código antiguo en caché", async () => {
+  const browser = browserTransport({revision: "?v=123abc456def"});
+  const pending = browser.api("/api/simular", {method: "POST", body: "{}"});
+  const worker = browser.workers[0];
+  assert.equal(worker.url, "https://example.github.io/finanzas/model-worker.js?v=123abc456def");
+  worker.respond({id: worker.messages[0].id, status: 200, body: "{}"});
+  assert.equal((await pending).ok, true);
 });

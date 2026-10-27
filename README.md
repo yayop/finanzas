@@ -38,6 +38,10 @@ Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «V
 - Inclusión opcional de ingresos extra en el cálculo del reparto.
 - Proyecciones de hasta 60 meses, gráficos, saldos y compensaciones entre ambas personas.
 - Compromisos posteriores al período proyectado.
+- Pestaña Operativa con cuentas individuales o comunes, moneda, saldos y transferencias planificadas.
+- Asignación de cada ingreso o pago a una cuenta y calendario de caja con saldos mínimos.
+- Pestaña Ajustes con sliders del reparto de cada gasto compartido.
+- Grupos, etiquetas y marcas de gastos en el gráfico, con series mensuales o acumuladas.
 - Referencia para comparar cambios, exportación e importación de planes JSON.
 
 Los nombres iniciales son Yayo y Fer y pueden cambiarse en «Nombres». Por ejemplo, un gasto compartido de 100 EUR con un reparto 25/75 asigna 25 EUR a la primera persona y 75 EUR a la segunda, aunque cualquiera de las dos realice el pago. Bajo «Igualar margen», la compensación general puede redistribuir indirectamente el efecto de ese reparto.
@@ -56,7 +60,17 @@ Los planes de la versión anterior se convierten al formato de movimientos conse
 
 Los resultados son mensuales y previos a reservar ahorro. Los movimientos conservan su moneda original y se presentan en EUR, usando un tipo de cambio constante editable y sin comisiones. Los saldos iniciales se introducen en EUR.
 
-El modelo no comprueba la liquidez entre vencimientos dentro de un mes, no gestiona cuentas bancarias y no calcula derechos ni importes legales de prestaciones. Un saldo negativo indica dinero por cubrir; no genera un crédito automático.
+La pestaña Operativa calcula la caja por cuenta en las fechas registradas. Si coinciden pagos e ingresos en una fecha, considera primero las salidas para mostrar un mínimo conservador; no conoce las horas bancarias. Las transferencias son planificación y no se ejecutan. El modelo no conecta con bancos ni calcula derechos o importes legales de prestaciones. Un saldo negativo indica dinero por cubrir; no genera un crédito automático.
+
+## Cuentas y perspectivas
+
+Los saldos iniciales de las cuentas se suman al «Saldo sin cuenta» de cada persona. No se debe registrar el mismo dinero en ambos lugares. Las cuentas comunes atribuyen su saldo según el porcentaje configurado. Cada movimiento conserva quién asume su costo, quién paga y desde qué cuenta sale o entra el dinero.
+
+«Por reparto» muestra el costo asumido; «Por pagos» muestra los pagos atribuidos a cada persona; en las cuentas comunes se usa su porcentaje. Los pagos de uno reducen su aporte pendiente en los demás. La compensación pendiente es acumulada y compara el acuerdo con la posición real por cuentas, descontando las transferencias planificadas. La proyección supone que el acuerdo se cumple; la caja operativa muestra el dinero según los pagos y transferencias registrados.
+
+Los sliders fijan el porcentaje de cada gasto compartido. «Regla general» devuelve un registro al reparto global. «Igualar margen» puede compensar indirectamente los cambios de un slider mediante otros aportes.
+
+Un grupo reúne gastos sin duplicarlos. Un gasto puede tener varias etiquetas; por eso las series de etiquetas pueden superponerse. «Marcar en gráfico» señala los meses de ese gasto y muestra su concepto e importe al seleccionarlos.
 
 ## Ejemplo ficticio
 

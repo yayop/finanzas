@@ -266,6 +266,81 @@ tbody tr:last-child > * { border-bottom: 0; }
   .commitment-row { flex-wrap: wrap; gap: 7px; }
   .commitment-row > span { margin-left: auto; }
 }
+.workspace-tabs { display: flex; gap: 6px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
+.workspace-tabs button { min-height: 48px; padding: 11px 20px; border: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 16px; color: var(--muted); }
+.workspace-tabs button:hover { color: var(--text); background: #f0f3f0; }
+.workspace-tabs button[aria-selected=true] { color: var(--green); border-bottom-color: var(--green); font-weight: 600; }
+.tab-panel { min-width: 0; }
+.chart-controls { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.chart-view-label { display: block; }
+.chart-view-label select { width: 135px; height: 38px; padding-top: 6px; padding-bottom: 6px; font-size: 14px; }
+.chart-group-legend { flex-wrap: wrap; gap: 8px; padding-bottom: 12px; }
+.group-series-button { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 5px; background: white; font-size: 14px; color: var(--text); }
+.group-series-button[aria-pressed=false] { color: var(--muted); opacity: .6; }
+.group-series-button:hover { background: var(--soft); }
+.chart-annotations { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 20px 10px; }
+.chart-annotations:empty { display: none; }
+.group-chip, .chart-tag, .operation-tag { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: #fafbfa; font-size: 13px; overflow-wrap: anywhere; }
+.operations-layout, .operations-stack { display: grid; gap: 18px; min-width: 0; align-content: start; }
+.operations-toolbar, .adjustments-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; }
+.operations-toolbar select, .adjustments-toolbar select { width: auto; min-width: 200px; }
+.operations-grid { display: grid; grid-template-columns: 370px minmax(0, 1fr); align-items: start; gap: 22px; }
+.operation-card { padding: 20px; }
+.operation-card > .card-heading { padding: 0 0 16px; }
+.operation-card h3 { font-size: 17px; }
+.operation-form { display: grid; gap: 14px; }
+.operation-form .field { margin-bottom: 0; }
+.operation-actions, .account-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.operation-actions { justify-content: flex-end; }
+.operation-actions .button { min-height: 36px; }
+.account-grid, .transfer-list { display: grid; gap: 12px; }
+.account-card, .transfer-card { min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 15px; }
+.account-heading { margin-bottom: 14px; }
+.account-heading h3, .account-heading strong { overflow-wrap: anywhere; }
+.account-heading .button { min-height: 32px; padding: 5px 8px; }
+.account-balance { display: block; font-size: 25px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 7px; }
+.account-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 8px; color: var(--muted); font-size: 13px; }
+.operation-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.operation-row:last-child { border-bottom: 0; }
+.operation-row > div { min-width: 0; }
+.operation-row strong { display: block; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.operation-row small { display: block; color: var(--muted); margin-top: 3px; }
+.operation-note { color: var(--muted); font-size: 14px; line-height: 1.5; }
+.operation-card > .operation-note { margin-top: 14px; }
+.operation-empty { padding: 12px 0; color: var(--muted); font-size: 14px; }
+.operation-summary, .settlement-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.operation-summary > div, .settlement-grid > div { min-width: 0; }
+.operation-summary strong, .settlement-grid strong { display: block; margin-top: 4px; font-size: 23px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.operation-summary small, .settlement-grid small { color: var(--muted); }
+.operation-perspective { margin-bottom: 16px; }
+.operation-table-select { min-width: 155px; height: 38px; padding-top: 6px; padding-bottom: 6px; font-size: 15px; }
+.adjustment-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; gap: 16px; }
+.adjustment-card { padding: 20px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.adjustment-card h3 { font-size: 17px; overflow-wrap: anywhere; }
+.adjustment-card > header, .adjustment-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.adjustment-amount { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.adjustment-controls { display: grid; gap: 12px; }
+.split-labels { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; font-variant-numeric: tabular-nums; }
+.split-labels > :last-child { text-align: right; }
+.split-labels output { font-weight: 600; }
+.adjustment-summary { margin: 0 0 20px; }
+.adjustment-card .operation-note { margin-top: 13px; }
+@media (max-width: 999px) {
+  .operations-grid { grid-template-columns: minmax(0, 1fr); }
+  .operations-grid > .operations-stack:first-child { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .workspace-tabs { gap: 0; margin-bottom: 20px; }
+  .workspace-tabs button { flex: 1; padding-left: 10px; padding-right: 10px; }
+  .chart-controls { justify-content: flex-start; }
+  .chart-annotations { margin-left: 16px; margin-right: 16px; }
+  .operation-card, .adjustment-card { padding: 16px; }
+  .operations-grid > .operations-stack:first-child { grid-template-columns: minmax(0, 1fr); }
+  .operations-toolbar, .adjustments-toolbar { align-items: flex-start; }
+  .operations-toolbar select, .adjustments-toolbar select { min-width: 0; max-width: 100%; }
+  .operation-summary, .settlement-grid { grid-template-columns: minmax(0, 1fr); }
+  .account-heading { align-items: flex-start; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
 }
