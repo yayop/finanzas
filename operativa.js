@@ -16,6 +16,7 @@
   function normalize(caso) {
     caso.cuentas ??= [];
     caso.transferencias ??= [];
+    caso.comision_cambio_eur ??= "0.00";
     if (Array.isArray(caso.cuentas)) caso.cuentas.forEach((account) => { account.porcentaje_el ??= "50"; });
     if (Array.isArray(caso.transferencias)) caso.transferencias.forEach((transfer) => {
       transfer.modalidad ??= "unico";
@@ -50,8 +51,9 @@
     const recurring = transfer.modalidad === "recurrente";
     const route = `${origin?.nombre || "Sin origen"} → ${destination?.nombre || "Sin destino"}`;
     const crossCurrency = origin && destination && origin.moneda !== destination.moneda;
+    const fee = ctx.eur(Math.round(Number(ctx.state.caso.comision_cambio_eur) * 100), 2);
     const accountOptions = accounts.map((account) => [account.id, account.nombre + " · " + account.moneda]);
-    return `<details class="transfer-card" data-op-detail="transfer-${e(transfer.id)}"><summary class="account-heading"><strong>${e(transfer.concepto || "Transferencia")}</strong><span class="account-meta">${e(route)}</span></summary><div class="operation-form"><div class="field-grid">${input(ctx, "transfer", index, "concepto", "Concepto", transfer.concepto, {wide: true})}${select(ctx, "transfer", index, "origen", "Desde", transfer.origen, accountOptions, true)}${select(ctx, "transfer", index, "destino", "Hacia", transfer.destino, accountOptions.filter(([id]) => id !== transfer.origen), true)}${input(ctx, "transfer", index, "importe", "Importe de origen", transfer.importe, {type: "number", min: 0, step: origin?.moneda === "CLP" ? "1" : "0.01", suffix: origin?.moneda === "CLP" ? "CLP" : "€", wide: true})}${select(ctx, "transfer", index, "modalidad", "Frecuencia", transfer.modalidad, [["unico", "Una vez"], ["recurrente", "Recurrente"]], true)}${input(ctx, "transfer", index, "fecha", recurring ? "Desde" : "Fecha", transfer.fecha, {type: "date", wide: !recurring})}${recurring ? input(ctx, "transfer", index, "intervalo_meses", "Cada (meses)", transfer.intervalo_meses, {type: "number", min: 1, max: 12, step: 1}) + input(ctx, "transfer", index, "hasta", "Fin (opcional)", transfer.hasta, {type: "date", required: false, wide: true}) : ""}</div>${crossCurrency ? '<p class="operation-note">Conversión con el cambio del plan, sin comisión.</p>' : ""}<div class="operation-actions"><button class="button ghost small danger" data-op-delete-transfer="${index}" type="button">Eliminar</button></div></div></details>`;
+    return `<details class="transfer-card" data-op-detail="transfer-${e(transfer.id)}"><summary class="account-heading"><strong>${e(transfer.concepto || "Transferencia")}</strong><span class="account-meta">${e(route)}</span></summary><div class="operation-form"><div class="field-grid">${input(ctx, "transfer", index, "concepto", "Concepto", transfer.concepto, {wide: true})}${select(ctx, "transfer", index, "origen", "Desde", transfer.origen, accountOptions, true)}${select(ctx, "transfer", index, "destino", "Hacia", transfer.destino, accountOptions.filter(([id]) => id !== transfer.origen), true)}${input(ctx, "transfer", index, "importe", "Importe de origen", transfer.importe, {type: "number", min: 0, step: origin?.moneda === "CLP" ? "1" : "0.01", suffix: origin?.moneda === "CLP" ? "CLP" : "€", wide: true})}${select(ctx, "transfer", index, "modalidad", "Frecuencia", transfer.modalidad, [["unico", "Una vez"], ["recurrente", "Recurrente"]], true)}${input(ctx, "transfer", index, "fecha", recurring ? "Desde" : "Fecha", transfer.fecha, {type: "date", wide: !recurring})}${recurring ? input(ctx, "transfer", index, "intervalo_meses", "Cada (meses)", transfer.intervalo_meses, {type: "number", min: 1, max: 12, step: 1}) + input(ctx, "transfer", index, "hasta", "Fin (opcional)", transfer.hasta, {type: "date", required: false, wide: true}) : ""}</div>${crossCurrency ? `<p class="operation-note">Cambio del plan; comisión ${e(fee)} en origen.</p>` : ""}<div class="operation-actions"><button class="button ghost small danger" data-op-delete-transfer="${index}" type="button">Eliminar</button></div></div></details>`;
   }
 
   function assignmentOptions(movement, accounts, ctx) {
@@ -65,6 +67,80 @@
     return `<div class="table-wrap"><table><thead><tr><th>Registro</th><th>Tipo</th><th>Cuenta</th></tr></thead><tbody>${movements.map((movement, index) => `<tr><th scope="row">${e(movement.concepto)}</th><td>${e(movement.tipo === "ingreso" ? "Ingreso" : movement.tipo === "deuda" ? "Deuda" : "Gasto")}</td><td><select class="operation-table-select" aria-label="Cuenta de ${e(movement.concepto)}" data-op-key="movement-${index}-cuenta_id" data-op-kind="movement" data-op-index="${index}" data-op-field="cuenta_id"><option value="">Sin cuenta</option>${assignmentOptions(movement, ctx.state.caso.cuentas, ctx).map(([id, name]) => `<option value="${e(id)}" ${id === movement.cuenta_id ? "selected" : ""}>${e(name)}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>`;
   }
 
+  function eventEUR(units, currency, rate) {
+    if (!Number.isSafeInteger(units)) return null;
+    if (currency === "EUR") return units;
+    const match = String(rate).trim().match(/^\+?(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/);
+    if (!match) return null;
+    const scale = (match[2] || "").length - Number(match[3] || 0);
+    if (!Number.isSafeInteger(scale) || Math.abs(scale) > 1000) return null;
+    let numerator = BigInt(match[1] + (match[2] || "")), denominator = 1n;
+    if (scale >= 0) denominator = 10n ** BigInt(scale); else numerator *= 10n ** BigInt(-scale);
+    if (numerator <= 0n) return null;
+    const value = BigInt(Math.abs(units)) * 100n * denominator;
+    const rounded = value / numerator + ((value % numerator) * 2n >= numerator ? 1n : 0n);
+    const result = Number(rounded) * Math.sign(units);
+    return Number.isSafeInteger(result) ? result : null;
+  }
+
+  function equivalentContributions(caso, row, operation) {
+    if (!row?.pagos_personales_centimos_eur || !row.asignacion_comunes_centimos_eur || !Array.isArray(row.pagos) || !Array.isArray(row.ingresos)) return null;
+    const people = ["el", "ella"], accounts = new Map((caso.cuentas || []).map((account) => [account.id, account]));
+    const movements = new Map((caso.movimientos || []).map((movement) => [movement.id, movement]));
+    const transfers = new Map((caso.transferencias || []).map((transfer) => [transfer.id, transfer]));
+    const accountFor = (record) => accounts.get(record.cuenta_id || movements.get(record.id)?.cuenta_id || transfers.get(record.transferencia_id)?.origen || record.origen);
+    const paid = {el: 0, ella: 0}, jointIncome = {el: 0, ella: 0};
+    for (const payment of row.pagos) {
+      if (!Number.isSafeInteger(payment.importe_centimos_eur)) return null;
+      const account = accountFor(payment);
+      if (account?.titular === "compartido") continue;
+      const person = account?.titular || payment.pagador;
+      if (!people.includes(person)) return null;
+      paid[person] += payment.importe_centimos_eur;
+    }
+    for (const income of row.ingresos) {
+      if (accountFor(income)?.titular !== "compartido") continue;
+      if (!people.includes(income.persona) || !Number.isSafeInteger(income.importe_centimos_eur)) return null;
+      jointIncome[income.persona] += income.importe_centimos_eur;
+    }
+    const target = Object.fromEntries(people.map((person) => [person, row.pagos_personales_centimos_eur[person] + row.asignacion_comunes_centimos_eur[person] - paid[person] - jointIncome[person]]));
+    if (!Object.values(target).every(Number.isSafeInteger)) return null;
+    const planned = {el: 0, ella: 0}, direct = {el: 0, ella: 0};
+    for (const event of operation?.eventos || []) {
+      if (event.tipo !== "transferencia" || !(event.importe_unidades < 0)) continue;
+      const origin = accounts.get(event.cuenta_id), destination = accounts.get(event.contracuenta_id);
+      if (!origin || !destination) continue;
+      const amount = eventEUR(-event.importe_unidades, origin.moneda, row.clp_por_eur);
+      if (amount === null) return null;
+      if (people.includes(origin.titular) && destination.titular === "compartido") planned[origin.titular] += amount;
+      else if (origin.titular === "compartido" && people.includes(destination.titular)) planned[destination.titular] -= amount;
+      else if (people.includes(origin.titular) && people.includes(destination.titular) && origin.titular !== destination.titular) {
+        direct[origin.titular] += amount;
+        direct[destination.titular] -= amount;
+      }
+    }
+    if (![...Object.values(planned), ...Object.values(direct)].every(Number.isSafeInteger)) return null;
+    const jointNeed = target.el + target.ella;
+    if (!Number.isSafeInteger(jointNeed)) return null;
+    return {tipo: jointNeed === 0 ? "directa" : "conjunta", objetivo_centimos_eur: target,
+      planificado_centimos_eur: planned, directo_planificado_centimos_eur: direct,
+      necesidad_conjunta_centimos_eur: jointNeed};
+  }
+
+  function contributionCard(ctx, row, operation) {
+    const proposal = equivalentContributions(ctx.state.caso, row, operation);
+    if (!proposal || (!row.pagos.length && !ctx.state.caso.cuentas.some((account) => account.titular === "compartido"))) return "";
+    const e = ctx.escapeHtml, target = proposal.objetivo_centimos_eur;
+    const heading = '<div class="card-heading"><h3>Aportes equivalentes del mes</h3></div>';
+    const note = '<p class="operation-note">Propuesta según reparto; las transferencias guardadas no se cambian.</p>';
+    if (proposal.tipo === "directa") {
+      const net = target.el, planned = proposal.directo_planificado_centimos_eur.el;
+      const route = (amount) => e(amount > 0 ? `${ctx.personName("el")} → ${ctx.personName("ella")}` : `${ctx.personName("ella")} → ${ctx.personName("el")}`);
+      return `${heading}<div class="operation-summary"><span>${net === 0 ? "Sin transferencia equivalente" : route(net)}</span>${net === 0 ? "" : `<strong>${ctx.eur(Math.abs(net))}</strong>`}<small>Planificado este mes: ${planned === 0 ? ctx.eur(0) : `${route(planned)} · ${ctx.eur(Math.abs(planned))}`}</small></div>${note}`;
+    }
+    return `${heading}<div class="table-wrap"><table><thead><tr><th>Persona</th><th>Propuesto</th><th>Planificado (+/−)</th></tr></thead><tbody>${["el", "ella"].map((person) => `<tr><th scope="row">${e(ctx.personName(person))}</th><td>${target[person] < 0 ? "Recibir" : "Aportar"} ${ctx.eur(Math.abs(target[person]))}</td><td>${ctx.eur(proposal.planificado_centimos_eur[person])}</td></tr>`).join("")}</tbody></table></div>${note}`;
+  }
+
   function settlement(ctx, row, operation) {
     const e = ctx.escapeHtml;
     if (!row) return '<p class="operation-empty">Sin cálculo</p>';
@@ -76,7 +152,7 @@
       const paid = (operation?.pagos_atribuidos_centimos_eur || row.pagos_externos_centimos_eur)[person];
       return `<div class="operation-summary"><span>${e(ctx.personName(person))}</span><strong>${ctx.eur(perspective === "reparto" ? cost : paid)}</strong><small>${perspective === "reparto" ? "Costo asumido" : "Pagos atribuidos"}</small><span class="muted">${perspective === "reparto" ? "Pagado" : "Asume"}: ${ctx.eur(perspective === "reparto" ? paid : cost)}</span></div>`;
     }).join("");
-    return `<div class="operation-perspective segmented" role="group" aria-label="Perspectiva del acuerdo"><button data-op-perspective="reparto" type="button" aria-pressed="${perspective === "reparto"}">Por reparto</button><button data-op-perspective="pagos" type="button" aria-pressed="${perspective === "pagos"}">Por pagos</button></div><div class="settlement-grid">${cards}</div><div class="operation-summary"><span>${net === 0 ? "Sin ajuste pendiente" : e(transfer)}</span>${net === 0 ? "" : `<strong>${ctx.eur(Math.abs(net))}</strong>`}<small>Pendiente acumulado hasta ${e(monthName(row.mes))}</small></div><p class="operation-note">Un pago cubierto por una persona reduce lo que debe aportar en los demás. El ajuste neto descuenta los pagos de ambos y las transferencias planificadas. Los pagos desde cuentas comunes se atribuyen según su porcentaje.</p>`;
+    return `<div class="operation-perspective segmented" role="group" aria-label="Perspectiva del acuerdo"><button data-op-perspective="reparto" type="button" aria-pressed="${perspective === "reparto"}">Por reparto</button><button data-op-perspective="pagos" type="button" aria-pressed="${perspective === "pagos"}">Por pagos</button></div><div class="settlement-grid">${cards}</div><div class="operation-summary"><span>${net === 0 ? "Sin ajuste pendiente" : e(transfer)}</span>${net === 0 ? "" : `<strong>${ctx.eur(Math.abs(net))}</strong>`}<small>Pendiente acumulado hasta ${e(monthName(row.mes))}</small></div><p class="operation-note">Un pago cubierto por una persona reduce lo que debe aportar en los demás. El ajuste neto descuenta los pagos de ambos y las transferencias planificadas. Los pagos desde cuentas comunes se atribuyen según su porcentaje.</p>${contributionCard(ctx, row, operation)}`;
   }
 
   function balances(ctx, operation) {
@@ -119,7 +195,7 @@
     const transfers = Array.isArray(state.caso.transferencias) ? state.caso.transferencias : [];
     const deficits = operation?.cuentas.filter((item) => item.saldo_minimo_unidades < 0) || [];
     const missing = operation?.sin_cuenta || [];
-    element.innerHTML = `<div class="operations-layout"><div class="operations-toolbar"><h2>Operativa</h2><label class="month-select-label"><span>Mes</span><select class="select-control" data-op-month aria-label="Mes de operativa">${rows.map((item) => `<option value="${item.mes}" ${item.mes === selected ? "selected" : ""}>${e(monthName(item.mes))}</option>`).join("")}</select></label></div><form class="operations-grid" id="operation-form"><div class="operations-stack"><section class="card operation-card"><div class="card-heading"><h2>Cuentas</h2><button class="button ghost small" type="button" data-op-add-account>+ Cuenta</button></div><div class="account-grid">${accounts.map((account, index) => accountForm(account, index, ctx)).join("") || '<p class="operation-empty">Sin cuentas</p>'}</div><p class="operation-note">Los saldos de las cuentas se suman al dinero sin cuenta de cada persona.</p></section><section class="card operation-card"><div class="card-heading"><h2>Transferencias</h2><button class="button ghost small" type="button" data-op-add-transfer ${accounts.length < 2 ? "disabled" : ""}>+ Transferencia</button></div><p class="operation-note">Planificadas; no se ejecutan automáticamente.</p><div class="transfer-list">${transfers.map((transfer, index) => transferForm(transfer, index, ctx)).join("") || '<p class="operation-empty">Sin transferencias</p>'}</div></section>${undo ? '<button class="button ghost" type="button" data-op-undo>Deshacer eliminación</button>' : ""}</div><div class="operations-stack"><section class="card operation-card"><div class="card-heading"><h2>Caja por cuenta</h2></div>${balances(ctx, operation)}${deficits.length ? `<p class="warning-note">Falta saldo durante el mes: ${deficits.map((item) => e(accounts.find((account) => account.id === item.cuenta_id)?.nombre || item.cuenta_id) + (item.primer_deficit ? ` (${e(dateName(item.primer_deficit))})` : "")).join(", ")}</p>` : ""}<p class="operation-note">Si coinciden fechas, se consideran los pagos antes de los ingresos.</p></section><section class="card operation-card"><div class="card-heading"><h2>Reparto y pagos</h2></div>${settlement(ctx, row, operation)}</section><section class="card operation-card"><div class="card-heading"><h2>Asignación de cuentas</h2>${missing.length ? `<span class="badge">${missing.length} sin cuenta este mes</span>` : ""}</div>${assignments(ctx)}</section><section class="card operation-card"><div class="card-heading"><h2>Movimientos del mes</h2></div>${events(ctx, operation)}</section></div></form></div>`;
+    element.innerHTML = `<div class="operations-layout"><div class="operations-toolbar"><h2>Operativa</h2><label class="month-select-label"><span>Mes</span><select class="select-control" data-op-month aria-label="Mes de operativa">${rows.map((item) => `<option value="${item.mes}" ${item.mes === selected ? "selected" : ""}>${e(monthName(item.mes))}</option>`).join("")}</select></label></div><form class="operations-grid" id="operation-form"><div class="operations-stack"><section class="card operation-card"><div class="card-heading"><h2>Cuentas</h2><button class="button ghost small" type="button" data-op-add-account>+ Cuenta</button></div><div class="account-grid">${accounts.map((account, index) => accountForm(account, index, ctx)).join("") || '<p class="operation-empty">Sin cuentas</p>'}</div><p class="operation-note">Los saldos de las cuentas se suman al dinero sin cuenta de cada persona.</p></section><section class="card operation-card"><div class="card-heading"><h2>Transferencias</h2><button class="button ghost small" type="button" data-op-add-transfer ${accounts.length < 2 ? "disabled" : ""}>+ Transferencia</button></div>${input(ctx, "plan", 0, "comision_cambio_eur", "Comisión por cambio", state.caso.comision_cambio_eur, {type: "number", min: 0, step: "0.01", suffix: "€", wide: true})}<p class="operation-note">Solo al transferir entre monedas; se carga en origen.</p><p class="operation-note">Planificadas; no se ejecutan automáticamente.</p><div class="transfer-list">${transfers.map((transfer, index) => transferForm(transfer, index, ctx)).join("") || '<p class="operation-empty">Sin transferencias</p>'}</div></section>${undo ? '<button class="button ghost" type="button" data-op-undo>Deshacer eliminación</button>' : ""}</div><div class="operations-stack"><section class="card operation-card"><div class="card-heading"><h2>Caja por cuenta</h2></div>${balances(ctx, operation)}${deficits.length ? `<p class="warning-note">Falta saldo durante el mes: ${deficits.map((item) => e(accounts.find((account) => account.id === item.cuenta_id)?.nombre || item.cuenta_id) + (item.primer_deficit ? ` (${e(dateName(item.primer_deficit))})` : "")).join(", ")}</p>` : ""}<p class="operation-note">Si coinciden fechas, se consideran los pagos antes de los ingresos.</p></section><section class="card operation-card"><div class="card-heading"><h2>Reparto y pagos</h2></div>${settlement(ctx, row, operation)}</section><section class="card operation-card"><div class="card-heading"><h2>Asignación de cuentas</h2>${missing.length ? `<span class="badge">${missing.length} sin cuenta este mes</span>` : ""}</div>${assignments(ctx)}</section><section class="card operation-card"><div class="card-heading"><h2>Movimientos del mes</h2></div>${events(ctx, operation)}</section></div></form></div>`;
     element.querySelectorAll("details[data-op-detail]").forEach((details) => { details.open = opened.has(details.dataset.opDetail); });
     if (key) {
       const next = element.querySelector(`[data-op-key="${key}"]`);
@@ -143,7 +219,7 @@
     const kind = input.dataset.opKind, index = Number(input.dataset.opIndex), property = input.dataset.opField;
     const caso = context.state.caso;
     const collection = kind === "account" ? caso.cuentas : kind === "transfer" ? caso.transferencias : caso.movimientos;
-    const item = collection[index];
+    const item = kind === "plan" ? caso : collection[index];
     if (!item) return;
     item[property] = property === "intervalo_meses" ? Number(input.value) : input.value;
     let structural = input.tagName === "SELECT";
@@ -232,5 +308,5 @@
     });
   }
 
-  window.FinanzasOperativa = {normalize, render, bind, checkValidity: () => host()?.querySelector("form")?.checkValidity() ?? true};
+  window.FinanzasOperativa = {normalize, render, bind, equivalentContributions, checkValidity: () => host()?.querySelector("form")?.checkValidity() ?? true};
 })();

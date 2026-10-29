@@ -29,6 +29,7 @@ def _sumar(destino, partes):
 
 
 def preparar_operativa(caso, movimientos):
+    comision_eur = m._importe(caso.get("comision_cambio_eur", "0"), "EUR", "comision_cambio_eur")
     cuentas_input = caso.get("cuentas", [])
     if not isinstance(cuentas_input, list) or len(cuentas_input) > 100:
         raise ValueError("cuentas debe ser una lista de hasta 100 cuentas")
@@ -100,7 +101,30 @@ def preparar_operativa(caso, movimientos):
         elif hasta not in ("", None) and not isinstance(hasta, str):
             raise ValueError("hasta de transferencia debe ser una fecha o texto vacío")
         transferencias.append(transferencia)
-    return {"activa": bool(cuentas or transferencias), "cuentas": cuentas, "por_id": por_id, "transferencias": transferencias}
+    comisiones = []
+    identificadores = {movimiento["id"] for movimiento in movimientos}
+    for transferencia in transferencias:
+        cuenta_origen = por_id[transferencia["origen"]]
+        if not comision_eur or not transferencia["_importe"] or cuenta_origen["moneda"] == por_id[transferencia["destino"]]["moneda"]:
+            continue
+        identificador = "comision_cambio_" + transferencia["id"]
+        while identificador in identificadores:
+            identificador += "_"
+        identificadores.add(identificador)
+        conjunta = cuenta_origen["titular"] == "compartido"
+        comision = {"id": identificador, "concepto": "Comisión de cambio", "tipo": "gasto",
+            "persona": cuenta_origen["titular"], "pagador": "el" if conjunta else cuenta_origen["titular"],
+            "cuenta_id": cuenta_origen["id"], "moneda": "EUR", "_importe": comision_eur,
+            "modalidad": transferencia["modalidad"], "intervalo_meses": transferencia["intervalo_meses"],
+            "_fecha": transferencia["_fecha"], "_cantidad": transferencia["_cantidad"],
+            "_porcentaje": m.Decimal(100) if conjunta else m.Decimal(0),
+            "grupo": "Comisiones", "etiquetas": ["Cambio de divisa"], "origen_tipo": "comision_cambio",
+            "transferencia_id": transferencia["id"], "_comision_cambio": True}
+        if conjunta:
+            comision.update(_reparto="fijo", _porcentaje_el=cuenta_origen["_porcentaje_el"])
+        comisiones.append(comision)
+    return {"activa": bool(cuentas or transferencias), "cuentas": cuentas, "por_id": por_id,
+            "transferencias": transferencias, "comisiones": comisiones, "comision_cambio_centimos_eur": comision_eur}
 
 
 def saldos_iniciales_cuentas(caso, preparado):
@@ -146,6 +170,8 @@ def simular_operativa(caso, preparado, calendario):
                 "persona": movimiento["persona"], "pagador": movimiento["pagador"], "moneda_original": movimiento["moneda"],
                 "importe_original": importe, "importe_centimos_eur": equivalente}
             cuenta_id = movimiento.get("cuenta_id", "")
+            if movimiento.get("transferencia_id"):
+                registro["transferencia_id"] = movimiento["transferencia_id"]
             if not ingreso:
                 if cuenta_id:
                     _sumar(pagos_atribuidos, _partes(equivalente, por_id[cuenta_id]))
@@ -155,7 +181,11 @@ def simular_operativa(caso, preparado, calendario):
                 sin_cuenta.append(registro)
                 caja_libre[movimiento["persona"] if ingreso else movimiento["pagador"]] += equivalente if ingreso else -equivalente
                 continue
-            registro.update(cuenta_id=cuenta_id, importe_unidades=importe if ingreso else -importe, _equivalente=equivalente if ingreso else -equivalente)
+            unidades_cuenta = importe
+            if movimiento.get("_comision_cambio") and por_id[cuenta_id]["moneda"] == "CLP":
+                unidades_cuenta = m._redondear(Fraction(importe) * Fraction(cambio) / 100)
+            registro.update(cuenta_id=cuenta_id, importe_unidades=unidades_cuenta if ingreso else -unidades_cuenta,
+                            _equivalente=equivalente if ingreso else -equivalente)
             eventos.append(registro)
         for transferencia, fecha in transferencias[mes]:
             origen, destino = transferencia["origen"], transferencia["destino"]
