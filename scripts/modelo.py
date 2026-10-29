@@ -352,9 +352,9 @@ def _comprobar_enteros(valor):
 def simular_plan(caso, escenario):
     """Proyecta el plan sin modificarlo; pagos excluye los ingresos recibidos."""
     movimientos, escenario = _preparar(caso, escenario)
-    calendario, compromisos = _calendario(caso, movimientos)
     op_modulo = _operativa_modulo()
     preparado = op_modulo.preparar_operativa(caso, movimientos)
+    calendario, compromisos = _calendario(caso, movimientos + preparado["comisiones"])
     operativa = op_modulo.simular_operativa(caso, preparado, calendario) if preparado["activa"] else None
     saldos = {p: _importe(caso["personas"][p]["saldo_inicial_eur"], "EUR", "saldo inicial", negativo=True) for p in PERSONAS}
     iniciales_cuentas = op_modulo.saldos_iniciales_cuentas(caso, preparado)
@@ -387,6 +387,9 @@ def simular_plan(caso, escenario):
                 registro["etiquetas"] = list(movimiento["etiquetas"])
             if movimiento.get("cuenta_id"):
                 registro["cuenta_id"] = movimiento["cuenta_id"]
+            if movimiento.get("_comision_cambio"):
+                registro["transferencia_id"] = movimiento["transferencia_id"]
+                registro["es_comision_cambio"] = True
             persona, pagador = movimiento["persona"], movimiento["pagador"]
             if movimiento["tipo"] == "ingreso":
                 registro["extra"] = movimiento["extra"]
@@ -464,5 +467,7 @@ def simular_plan(caso, escenario):
         op_modulo.incorporar_compensaciones(operativa, meses)
         resultado["operativa"] = operativa
         resultado["conversion"] = "Cuentas en moneda original, valoradas al cambio de cada mes; revalorización y redondeos separados del flujo. Transferencias sin comisiones, compensaciones del acuerdo pendientes hasta planificarlas."
+        if preparado["comision_cambio_centimos_eur"]:
+            resultado["conversion"] = "Cuentas en moneda original, valoradas al cambio de cada mes; revalorización y redondeos separados del flujo. Cada transferencia entre monedas incluye la comisión fija EUR configurada, cargada a la cuenta de origen; compensaciones del acuerdo pendientes hasta planificarlas."
     _comprobar_enteros(resultado)
     return resultado

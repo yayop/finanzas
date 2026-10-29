@@ -242,10 +242,14 @@ function markEdited() {
   $("#data-mode").textContent = "Plan";
 }
 
+function exportablePlan() {
+  return {version: 2, caso: state.caso, escenario: state.escenario, reference: state.reference && {caso: state.reference.caso, escenario: state.reference.escenario}};
+}
+
 function persist() {
   if (!state.saveEnabled) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({version: 2, caso: state.caso, escenario: state.escenario, reference: state.reference && {caso: state.reference.caso, escenario: state.reference.escenario}}));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(exportablePlan()));
     $("#restore-plan").hidden = false;
   } catch { /* El cálculo sigue disponible aunque no haya almacenamiento local. */ }
 }
@@ -464,7 +468,7 @@ function renderComparison() {
     return;
   }
   const samePeriod = state.result.inicio === state.reference.result.inicio && state.result.fin === state.reference.result.fin;
-  $("#comparison").innerHTML = `<div class="comparison-header"><h3>Saldo final</h3><span class="chip">${escapeHtml(RULES[state.reference.escenario.regla])}</span></div>${!samePeriod ? `<p class="warning-note">Períodos distintos</p>` : ""}<div class="comparison-grid">${[[personName("el"), "el"], [personName("ella"), "ella"], ["Hogar", "hogar"]].map(([name, key]) => {
+  $("#comparison").innerHTML = `<div class="comparison-header"><h3>Saldo final</h3><span class="chip">${escapeHtml(state.reference.escenario.nombre || RULES[state.reference.escenario.regla])}</span></div>${!samePeriod ? `<p class="warning-note">Períodos distintos</p>` : ""}<div class="comparison-grid">${[[personName("el"), "el"], [personName("ella"), "ella"], ["Hogar", "hogar"]].map(([name, key]) => {
     const amount = key === "hogar" ? current.hogar.saldo_final_centimos_eur : current.saldo_final_centimos_eur[key];
     const before = key === "hogar" ? reference.hogar.saldo_final_centimos_eur : reference.saldo_final_centimos_eur[key];
     return `<div class="comparison-item"><span class="muted">${escapeHtml(name)}</span><strong>${eur(amount)}</strong><small>${delta(amount, before)}</small></div>`;
@@ -675,6 +679,11 @@ async function importPlan(file) {
     if (!imported.caso || !imported.escenario) throw new Error("Usa un archivo exportado desde este simulador.");
     const plan = await preparePlan(imported);
     const result = await requestCalculation(plan.caso, plan.escenario);
+    let reference = null;
+    if (imported.reference) {
+      const previous = await preparePlan(imported.reference);
+      reference = {...previous, result: await requestCalculation(previous.caso, previous.escenario)};
+    }
     if (importSequence !== state.importSequence) return;
     if (sequence !== state.sequence) {
       toast("Se conservan tus cambios más recientes. Vuelve a importar si quieres reemplazarlos.");
@@ -686,7 +695,7 @@ async function importPlan(file) {
     state.caso = plan.caso;
     state.escenario = plan.escenario;
     state.result = result;
-    state.reference = null;
+    state.reference = reference;
     state.edited = !plan.caso.es_ficticio;
     state.saveEnabled = true;
     state.selected = result.meses[0].mes;
@@ -838,7 +847,7 @@ function bindEvents() {
   $("#reset").addEventListener("click", resetPlan);
   $("#download").addEventListener("click", () => {
     if (!$("#controls").checkValidity() || window.FinanzasOperativa?.checkValidity() === false || !$("#error").hidden || document.body.classList.contains("calculating")) { toast("Revisa los campos antes de exportar."); return; }
-    const blob = new Blob([JSON.stringify({version: 2, caso: state.caso, escenario: state.escenario}, null, 2)], {type: "application/json"});
+    const blob = new Blob([JSON.stringify(exportablePlan(), null, 2)], {type: "application/json"});
     const anchor = document.createElement("a");
     const url = URL.createObjectURL(blob);
     anchor.href = url;

@@ -39,6 +39,7 @@ Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «V
 - Proyecciones de hasta 60 meses, gráficos, saldos y compensaciones entre ambas personas.
 - Compromisos posteriores al período proyectado.
 - Pestaña Operativa con cuentas individuales o comunes, moneda, saldos y transferencias planificadas.
+- Comisión fija en EUR por cada transferencia entre monedas, cargada en la cuenta de origen.
 - Asignación de cada ingreso o pago a una cuenta y calendario de caja con saldos mínimos.
 - Pestaña Ajustes con sliders del reparto de cada gasto compartido.
 - Grupos, etiquetas y marcas de gastos en el gráfico, con series mensuales o acumuladas.
@@ -50,7 +51,7 @@ En cuotas, la fecha corresponde a la próxima cuota pendiente. Se puede introduc
 
 ## Datos y almacenamiento
 
-Los cambios válidos y la referencia se guardan en el almacenamiento local del navegador. Abrir o vaciar la pantalla no sobrescribe la copia anterior. Los planes no se sincronizan automáticamente entre computadores; se pueden transferir mediante «Exportar» e «Importar».
+Los cambios válidos y la referencia se guardan en el almacenamiento local del navegador. Abrir o vaciar la pantalla no sobrescribe la copia anterior. Los planes no se sincronizan automáticamente entre computadores; se pueden transferir mediante «Exportar» e «Importar», conservando también su referencia de comparación.
 
 El servidor local escucha únicamente en el propio equipo y no guarda los datos recibidos en archivos. Los archivos personales pueden conservarse en `datos/`, excluido de Git. También se excluyen resultados locales, credenciales y artefactos de `outputs/`.
 
@@ -67,6 +68,10 @@ La pestaña Operativa calcula la caja por cuenta en las fechas registradas. Si c
 Los saldos iniciales de las cuentas se suman al «Saldo sin cuenta» de cada persona. No se debe registrar el mismo dinero en ambos lugares. Las cuentas comunes atribuyen su saldo según el porcentaje configurado. Cada movimiento conserva quién asume su costo, quién paga y desde qué cuenta sale o entra el dinero.
 
 «Por reparto» muestra el costo asumido; «Por pagos» muestra los pagos atribuidos a cada persona; en las cuentas comunes se usa su porcentaje. Los pagos de uno reducen su aporte pendiente en los demás. La compensación pendiente es acumulada y compara el acuerdo con la posición real por cuentas, descontando las transferencias planificadas. La proyección supone que el acuerdo se cumple; la caja operativa muestra el dinero según los pagos y transferencias registrados.
+
+«Aportes equivalentes del mes» propone cuánto aporta o recibe cada persona de la cuenta común, descontando los gastos que ya paga desde sus cuentas personales. Si no quedan gastos comunes, muestra la transferencia directa equivalente. La propuesta cambia con el reparto; las transferencias guardadas se editan por separado.
+
+«Comisión por cambio» cobra una vez por cada transferencia positiva entre monedas distintas. No se cobra por mostrar una equivalencia en EUR ni por pagar con dinero que ya existe en la moneda del gasto. La comisión la asume el titular de la cuenta de origen o, si es común, su reparto configurado. El valor inicial es cero y se puede editar.
 
 Los sliders fijan el porcentaje de cada gasto compartido. «Regla general» devuelve un registro al reparto global. «Igualar margen» puede compensar indirectamente los cambios de un slider mediante otros aportes.
 
@@ -97,6 +102,7 @@ Las pruebas del modelo, la migración y el servidor usan Python. Las del editor 
 python3 -m unittest discover -s pruebas
 node --test pruebas/interfaz.test.cjs
 node --test pruebas/browser-runtime.test.cjs
+node --test pruebas/aportes.test.cjs
 ```
 
 ## Preparar la versión web

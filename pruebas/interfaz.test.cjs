@@ -72,7 +72,7 @@ function createApp(saved = {}) {
     clearTimeout: (id) => timers.delete(id)
   });
   if (operationSource) vm.runInContext(operationSource, context, {filename: "web/operativa.js"});
-  vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan, handleAdjustment, setTab, expenseSeries, chartData};", context, {filename: "web/app.js"});
+  vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan, handleAdjustment, setTab, expenseSeries, chartData, exportablePlan};", context, {filename: "web/app.js"});
   return {...context.app, nodes, storage};
 }
 
@@ -581,4 +581,24 @@ test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la refere
   assert.deepEqual(copy({caso: app.state.caso, escenario: app.state.escenario, reference: app.state.reference}), planBefore);
   assert.deepEqual(copy(app.state.result), resultBefore);
   assert.equal(app.state.tab, "projection");
+});
+
+
+test("exportar e importar conserva la referencia independiente para comparar repartos", async () => {
+  const original = createApp();
+  await loadExample(original);
+  const base = copy(original.state.reference.result.meses);
+  const shared = original.state.caso.movimientos.findIndex((item) => item.persona === "compartido");
+  const input = {dataset: {adjustIndex: String(shared)}, value: "25", closest: (selector) => selector === "[data-adjust-index]" ? input : null};
+  original.handleAdjustment({target: input});
+  await original.calculate();
+  const serialized = JSON.stringify(original.exportablePlan());
+  const restored = createApp();
+  await restored.initialize();
+  await restored.importPlan({size: serialized.length, text: async () => serialized});
+  assert.equal(restored.nodes.get("#error").hidden, true);
+  assert.deepEqual(copy(restored.state.result.meses), copy(original.state.result.meses));
+  assert.deepEqual(copy(restored.state.reference.result.meses), base);
+  assert.notDeepEqual(copy(restored.state.result.meses), base);
+  assert.equal(JSON.parse(restored.storage.get("finanzas-pareja-plan-v2")).reference.caso.movimientos[shared].reparto, "regla");
 });
