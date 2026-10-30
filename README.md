@@ -1,6 +1,6 @@
 # Finanzas en pareja
 
-Simulador mensual de ingresos, gastos, deudas y reglas de reparto para dos personas. Permite comparar cuánto dinero queda disponible para cada integrante y para el hogar.
+Simulador mensual de ingresos, gastos y reglas de reparto para dos personas. Los gastos pueden incluir pagos de deudas y cuotas. Permite comparar cuánto dinero queda disponible para cada integrante y para el hogar.
 
 ## Usar en el navegador
 
@@ -29,12 +29,13 @@ python3 scripts/servidor.py --port 8766
 Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «Vaciar» vuelve a ese estado. «Recuperar» carga el último plan guardado en ese navegador.
 
 - Nombres editables para ambas personas.
-- Ingresos, gastos y deudas con conceptos libres en EUR o CLP.
+- Ingresos y gastos con conceptos libres en EUR o CLP; las deudas se registran como gastos en cuotas.
 - Pagos únicos, recurrencias cada uno a doce meses y planes de cuotas.
 - Fechas de inicio y término, cuotas totales y cuotas ya pagadas.
 - Responsabilidad personal o compartida, independiente de quién realiza el pago.
 - Gastos compartidos según una regla general o porcentajes propios por movimiento.
 - Reparto 50/50, proporcional a ingresos, proporcional tras compromisos, igualdad de margen o porcentaje manual.
+- Opción por gasto para descontar su parte asignada del ingreso antes del reparto «Tras compromisos».
 - Inclusión opcional de ingresos extra en el cálculo del reparto.
 - Proyecciones de hasta 60 meses, gráficos, saldos y compensaciones entre ambas personas.
 - Compromisos posteriores al período proyectado.
@@ -48,7 +49,9 @@ Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «V
 
 Los nombres iniciales son Yayo y Fer y pueden cambiarse en «Nombres». Por ejemplo, un gasto compartido de 100 EUR con un reparto 25/75 asigna 25 EUR a la primera persona y 75 EUR a la segunda, aunque cualquiera de las dos realice el pago. Bajo «Igualar margen», la compensación general puede redistribuir indirectamente el efecto de ese reparto.
 
-En cuotas, la fecha corresponde a la próxima cuota pendiente. Se puede introducir el total original a dividir entre todas las cuotas o el importe fijo de cada cuota. Las cuotas ya pagadas no vuelven a cobrarse. No se infieren capital pendiente ni intereses a partir de una cuota.
+En cualquier gasto se puede elegir «En cuotas». La fecha corresponde a la próxima cuota pendiente. Se puede introducir el total original a dividir entre todas las cuotas o el importe fijo de cada cuota. Las cuotas ya pagadas no vuelven a cobrarse. No se infieren capital pendiente ni intereses a partir de una cuota.
+
+«Descontar antes de repartir» permite reconocer un gasto como compromiso previo en la regla «Tras compromisos». Marcado, reduce el ingreso considerado de quien asume su parte; desmarcado, sigue siendo un gasto de esa persona, pero no reduce la base del reparto. No cambia quién paga ni la cuenta. Los gastos nuevos comienzan desmarcados. Los planes anteriores conservan sus descuentos al importarse o recuperarse y los registros antes llamados «Deuda» pasan a «Gasto» con sus cuotas intactas.
 
 ## Datos y almacenamiento
 
@@ -76,9 +79,9 @@ Los saldos iniciales de las cuentas se suman al «Saldo sin cuenta» de cada per
 
 Los sliders fijan el porcentaje de cada gasto compartido. «Regla general» devuelve un registro al reparto global. «Igualar margen» puede compensar indirectamente los cambios de un slider mediante otros aportes.
 
-En Equivalencia, «Tras compromisos» reparte los gastos comunes según el ingreso considerado menos los gastos ya asignados a cada persona. Los gastos personales, los repartos fijos y las comisiones forman esos gastos previos; los compartidos con «Regla general» forman el gasto común. Por ejemplo, para que alguien asuma un compromiso y aporte proporcionalmente menos al arriendo, el compromiso debe quedar asignado a esa persona y el arriendo usar «Regla general».
+En Equivalencia, «Tras compromisos» reparte los gastos comunes según el ingreso considerado menos los gastos marcados para descontar. Si `Dk` es la parte marcada que ya se asignó a cada persona, la tasa es `αk = (Ik − Dk) / (I1 + I2 − D1 − D2)`. Un gasto personal parcialmente compartido solo descuenta su parte previamente asignada; un gasto con reparto fijo puede descontar la parte de cada persona. Los compartidos con «Regla general» forman el gasto común y no se descuentan también de la base. Las comisiones de cambio se mantienen como compromisos previos de quien las asume. Por ejemplo, para que alguien asuma un compromiso y aporte proporcionalmente menos al arriendo, hay que marcar ese compromiso y usar «Regla general» en el arriendo.
 
-«Por compromisos» muestra la tasa sobre gastos comunes; «Tasa única» muestra el porcentaje equivalente sobre el gasto total: `α′k = (Gk + αk × Gc) / (Gc + G1 + G2)`. Cambiar esta presentación conserva costos, excedentes, pagadores y transferencias. La regla base sí cambia el acuerdo. Las tasas se calculan por mes a partir de los costos exactos en céntimos; los porcentajes mostrados están redondeados y no se usan para recalcular dinero. El excedente incluye los ingresos reales, aunque se excluyan ingresos extra de la base del reparto, y no incluye ahorro ni revalorizaciones del saldo por cambio de divisa.
+«Por compromisos» muestra la tasa sobre gastos comunes; «Tasa única» muestra el porcentaje equivalente sobre el gasto total: `α′k = (Gk + αk × Gc) / (Gc + G1 + G2)`. Aquí `Gk` incluye todos los gastos previamente asignados, marcados o no: siempre reducen el excedente. Cambiar esta presentación conserva costos, excedentes, pagadores y transferencias. La regla base sí cambia el acuerdo. Las tasas se calculan por mes a partir de los costos exactos en céntimos; los porcentajes mostrados están redondeados y no se usan para recalcular dinero. El excedente incluye los ingresos reales, aunque se excluyan ingresos extra de la base del reparto, y no incluye ahorro ni revalorizaciones del saldo por cambio de divisa.
 
 Sin gastos, la tasa única queda sin definir. Si «Igualar margen» redistribuye ingresos con gasto total cero, no existe una tasa equivalente sobre ese total. Una tasa fuera de 0–100 % indica que el acuerdo incluye recibir dinero, además de pagar gastos.
 

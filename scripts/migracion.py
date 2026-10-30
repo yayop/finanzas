@@ -102,6 +102,8 @@ def _migrar_legacy(caso, escenario):
         movimiento.update(importe=str(gasto["importe_eur"]), moneda="EUR", fecha=gasto["desde"] + "-01",
                           hasta=_ultimo_dia(gasto["hasta"]),
                           porcentaje_compartido="100" if gasto["tipo"] == "comun" else "0")
+        if gasto["tipo"] == "comun":
+            movimiento.update(persona="compartido", reparto="regla")
         movimientos.append(movimiento)
 
     deuda = caso["deuda_fija"]
@@ -164,6 +166,16 @@ def migrar_plan(plan):
         if caso.get("version") == 2 or version == 2:
             raise ValueError("Un plan de versión 2 requiere movimientos")
         resultado["caso"], resultado["escenario"] = _migrar_legacy(caso, resultado["escenario"])
+    for movimiento in resultado["caso"]["movimientos"]:
+        if not isinstance(movimiento, dict):
+            # La validación detallada sigue correspondiendo al modelo.
+            continue
+        if movimiento.get("tipo") == "deuda":
+            movimiento["tipo"] = "gasto"
+        if movimiento.get("tipo") == "gasto":
+            # Los planes guardados ya descontaban todos sus gastos asignados.
+            # Hacer explícito ese acuerdo evita cambiar sus resultados al abrir.
+            movimiento.setdefault("descontar_antes_reparto", True)
     resultado["version"] = 2
     if resultado.get("reference") is not None:
         resultado["reference"] = migrar_plan(resultado["reference"])

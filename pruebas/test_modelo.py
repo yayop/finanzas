@@ -270,7 +270,9 @@ class ApiMovimientosTests(unittest.TestCase):
     def test_migracion_valida_movimientos_y_referencia_sin_sustituir_datos(self):
         plan = {"version": 2, "caso": caso_base(movimientos=[movimiento(concepto="Gasto propio")]), "escenario": escenario()}
         estado, convertido = self.solicitar("POST", "/api/migrar", plan)
-        self.assertEqual((estado, convertido), (200, plan))
+        esperado = copy.deepcopy(plan)
+        esperado["caso"]["movimientos"][0]["descontar_antes_reparto"] = True
+        self.assertEqual((estado, convertido), (200, esperado))
         plan["caso"]["movimientos"][0]["importe"] = "1.001"
         for ruta in ("/api/migrar", "/api/simular"):
             estado, error = self.solicitar("POST", ruta, plan)

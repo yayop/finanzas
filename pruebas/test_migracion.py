@@ -64,6 +64,30 @@ class MigracionTests(unittest.TestCase):
         self.assertEqual((deuda["fecha"], deuda["importe"], deuda["importe_tipo"]), ("2026-11-01", "200000", "cuota"))
         factura = self.movimiento(nuevo, "universidad_1")
         self.assertEqual((factura["cuotas_pagadas"], factura["importe_tipo"]), (0, "total"))
+        self.assertEqual(deuda["tipo"], "gasto")
+        self.assertEqual(factura["tipo"], "gasto")
+
+    def test_gasto_comun_legacy_expresa_su_responsabilidad_sin_cambiar_pagador(self):
+        self.caso["gastos"][0]["pagador"] = "ella"
+        nuevo = migrar_plan(self.plan)
+        comun = self.movimiento(nuevo, "hogar")
+        self.assertEqual((comun["tipo"], comun["persona"], comun["reparto"], comun["pagador"]),
+                         ("gasto", "compartido", "regla", "ella"))
+
+    def test_unifica_deuda_v2_conservando_cuotas_titular_y_eleccion_en_referencia(self):
+        nuevo = migrar_plan(self.plan)
+        cuota = self.movimiento(nuevo, "deuda_46_cuotas")
+        cuota.update(tipo="deuda", persona="ella", porcentaje_compartido="100", cuenta_id="banco", descontar_antes_reparto=False)
+        nuevo["reference"] = copy.deepcopy(nuevo)
+        del self.movimiento(nuevo["reference"], "deuda_46_cuotas")["descontar_antes_reparto"]
+        original = copy.deepcopy(nuevo)
+        convertido = migrar_plan(nuevo)
+        actual = self.movimiento(convertido, "deuda_46_cuotas")
+        self.assertEqual(actual, {**cuota, "tipo": "gasto"})
+        self.assertFalse(actual["descontar_antes_reparto"])
+        self.assertTrue(self.movimiento(convertido["reference"], "deuda_46_cuotas")["descontar_antes_reparto"])
+        self.assertEqual(nuevo, original)
+        self.assertEqual(migrar_plan(convertido), convertido)
 
     def test_materializa_overrides_sin_perder_repartos_parciales(self):
         self.plan["escenario"].update(universidad_compartida=True, cuotas_universidad=6, sustituir_chomage_por_eur="2675.43")

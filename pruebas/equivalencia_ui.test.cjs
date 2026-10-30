@@ -64,6 +64,46 @@ test("muestra las dos tasas de CPython y el mismo excedente sin volver a calcula
   assert.equal(ui.changes.length, 0);
 });
 
+test("un gasto sin descontar conserva su costo completo y no reduce la base proporcional", () => {
+  const plan = fixture();
+  plan.caso.movimientos[2].descontar_antes_reparto = false;
+  const ui = harness(plan), value = ui.state.result.meses[0].reparto_equivalente;
+  assert.deepEqual(value.gastos_previos_centimos_eur, {el: 0, ella: 100000});
+  assert.deepEqual(value.gastos_descontados_centimos_eur, {el: 0, ella: 0});
+  assert.deepEqual(value.base_reparto_centimos_eur, {el: 200000, ella: 200000});
+  assert.deepEqual(value.costos_originales_centimos_eur, {el: 75000, ella: 175000});
+  assert.deepEqual(value.excedentes_equivalentes_centimos_eur, {el: 125000, ella: 25000});
+  assert.match(ui.element.innerHTML, /Descontados antes de repartir · D/);
+  assert.match(ui.element.innerHTML, /D descuenta la parte ya asignada de los gastos marcados/);
+  const assignedRow = ui.element.innerHTML.match(/<th scope="row">Gastos ya asignados · G<\/th>(.*?)<\/tr>/)[1];
+  const discountedRow = ui.element.innerHTML.match(/<th scope="row">Descontados antes de repartir · D<\/th>(.*?)<\/tr>/)[1];
+  assert.ok(assignedRow.includes(escapeHtml(eur(100000))));
+  assert.ok(!discountedRow.includes(escapeHtml(eur(100000))));
+  assert.match(ui.element.innerHTML, /30\s*%/);
+  assert.match(ui.element.innerHTML, /70\s*%/);
+  const before = JSON.stringify(ui.state);
+  ui.emit("click", "[data-eq-perspective]", {dataset: {eqPerspective: "unica"}});
+  assert.equal(JSON.stringify(ui.state), before);
+  assert.equal(ui.changes.length, 0);
+});
+
+test("descontar un gasto modifica la base neta y conserva todos los gastos en la tasa única", () => {
+  const plan = fixture();
+  plan.caso.movimientos[2].descontar_antes_reparto = true;
+  const ui = harness(plan), value = ui.state.result.meses[0].reparto_equivalente;
+  assert.deepEqual(value.gastos_descontados_centimos_eur, {el: 0, ella: 100000});
+  assert.deepEqual(value.base_reparto_centimos_eur, {el: 200000, ella: 100000});
+  assert.deepEqual(value.costos_originales_centimos_eur, {el: 100000, ella: 150000});
+  assert.deepEqual(value.excedentes_equivalentes_centimos_eur, {el: 100000, ella: 50000});
+  assert.match(ui.element.innerHTML, /Neto de reparto es ingreso considerado menos gastos seleccionados/);
+  assert.match(ui.element.innerHTML, /40\s*%/);
+  assert.match(ui.element.innerHTML, /60\s*%/);
+  ui.state.escenario.regla = "mitades";
+  ui.state.result = simulate(plan);
+  ui.api.render(ui.context);
+  assert.doesNotMatch(ui.element.innerHTML, /Descontados antes de repartir · D|Neto de reparto es ingreso considerado menos gastos seleccionados/);
+});
+
 test("delegación única, selección de mes compartida y perspectiva persistente al recalcular", () => {
   const plan = fixture();
   plan.caso.fin = "2026-02";

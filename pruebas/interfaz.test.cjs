@@ -212,10 +212,118 @@ test("importar un ejemplo renderiza el editor y conserva sus resultados", async 
   assert.equal(row(app).flujo_libre_centimos_eur.el, 165000);
   assert.equal(row(app).flujo_libre_centimos_eur.ella, 64000);
   assert.ok(app.state.caso.movimientos.length > 10);
-  assert.match(app.nodes.get("#controls").innerHTML, /data-add-movement="deuda"/);
+  assert.match(app.nodes.get("#controls").innerHTML, /data-add-movement="gasto"/);
+  assert.doesNotMatch(app.nodes.get("#controls").innerHTML, /data-(?:add-movement|filter)="deuda"/);
   assert.match(app.nodes.get("#movement-list").innerHTML, /data-summary-concept/);
   assert.match(app.nodes.get("#chart").innerHTML, /<svg/);
   assert.equal(JSON.parse(app.storage.get("finanzas-pareja-plan-v2")).version, 2);
+});
+
+test("un gasto nuevo admite cuotas y descuento opcional sin categoría separada de deuda", async () => {
+  const app = createApp();
+  await loadPlan(app, plan(incomes()));
+  action(app, "[data-add-movement]", {addMovement: "gasto"});
+  const index = app.state.caso.movimientos.length - 1;
+  assert.equal(app.state.caso.movimientos[index].descontar_antes_reparto, false);
+  assert.match(app.nodes.get("#movement-list").innerHTML, /Ya se reparte como gasto común/);
+  const disabledDiscount = new RegExp(`data-path="caso\\.movimientos\\.${index}\\.descontar_antes_reparto" data-kind="boolean"[^>]*disabled`);
+  assert.match(app.nodes.get("#movement-list").innerHTML, disabledDiscount);
+  for (const [property, value] of Object.entries({concepto: "Compra en cuotas", persona: "ella", pagador: "ella", importe: "300.01", modalidad: "cuotas", cuotas: 3, cuotas_pagadas: 1, fecha: "2026-11-01"})) edit(app, index, property, value);
+  await app.calculate();
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+  assert.equal(app.state.caso.movimientos[index].tipo, "gasto");
+  assert.equal(row(app).cuotas_centimos_eur, 10000);
+  assert.equal(row(app, "2026-12").cuotas_centimos_eur, 10001);
+  assert.equal(row(app, "2027-01").cuotas_centimos_eur, 0);
+  const html = app.nodes.get("#movement-list").innerHTML;
+  assert.match(html, /Descontar antes de repartir/);
+  assert.match(html, new RegExp(`data-path="caso\\.movimientos\\.${index}\\.descontar_antes_reparto" data-kind="boolean"`));
+  assert.match(html, /Cuotas totales/);
+  assert.doesNotMatch(html, /<option value="deuda"/);
+  assert.doesNotMatch(html, disabledDiscount);
+  const restored = createApp(Object.fromEntries(app.storage));
+  await restored.initialize();
+  await restored.restoreSavedPlan();
+  const expense = restored.state.caso.movimientos[index];
+  assert.equal(expense.tipo, "gasto");
+  assert.equal(expense.modalidad, "cuotas");
+  assert.equal(expense.cuotas_pagadas, 1);
+  assert.equal(expense.descontar_antes_reparto, false);
+});
+
+test("descontar un gasto cambia el reparto neto, conserva pagos y se guarda al recuperar", async () => {
+  const app = createApp();
+  const input = plan([...incomes().map((item) => ({...item, importe: "2000.00"})),
+    movement("compromiso", {persona: "ella", pagador: "ella", importe: "1000.00", porcentaje_compartido: "0", descontar_antes_reparto: false}),
+    movement("comun", {importe: "1500.00", reparto: "regla", descontar_antes_reparto: false})]);
+  input.escenario.regla = "proporcional_disponible";
+  await loadPlan(app, input);
+  const before = copy(row(app));
+  assert.deepEqual(before.flujo_libre_centimos_eur, {el: 125000, ella: 25000});
+  edit(app, 2, "descontar_antes_reparto", true, {type: "checkbox"});
+  await app.calculate();
+  const after = row(app);
+  assert.equal(app.state.escenario.regla, "proporcional_disponible");
+  assert.deepEqual(copy(after.flujo_libre_centimos_eur), {el: 100000, ella: 50000});
+  assert.deepEqual(copy(after.pagos_externos_centimos_eur), before.pagos_externos_centimos_eur);
+  assert.deepEqual(copy(after.gastos_descontados_centimos_eur), {el: 0, ella: 100000});
+  assert.equal(after.hogar.pagos_externos_centimos_eur, before.hogar.pagos_externos_centimos_eur);
+  const restored = createApp(Object.fromEntries(app.storage));
+  await restored.initialize();
+  await restored.restoreSavedPlan();
+  assert.equal(restored.state.caso.movimientos[2].descontar_antes_reparto, true);
+  assert.deepEqual(copy(row(restored).flujo_libre_centimos_eur), copy(after.flujo_libre_centimos_eur));
+  restored.state.escenario.regla = "mitades";
+  edit(restored, 2, "descontar_antes_reparto", false, {type: "checkbox"});
+  await restored.calculate();
+  assert.equal(restored.state.escenario.regla, "mitades");
+  assert.deepEqual(copy(row(restored).flujo_libre_centimos_eur), {el: 125000, ella: 25000});
+});
+
+test("el slider activa y desactiva el descuento al pasar por 100 % sin reemplazar su tarjeta", async () => {
+  const app = createApp();
+  await loadPlan(app, plan([...incomes(), movement("parcial", {persona: "ella", porcentaje_compartido: "100", descontar_antes_reparto: true})]));
+  const hint = {textContent: "Ya se reparte como gasto común."};
+  const deduction = {disabled: true, checked: true, closest: (selector) => selector === ".toggle-row" ? {querySelector: () => hint} : null};
+  const summary = Object.fromEntries(["concept", "schedule", "amount"].map((key) => [`[data-summary-${key}]`, {textContent: ""}]));
+  const card = {querySelector: (selector) => selector === '[data-path="caso.movimientos.2.descontar_antes_reparto"]' ? deduction : summary[selector] || null};
+  const output = {textContent: "100 %"};
+  const range = {dataset: {path: "caso.movimientos.2.porcentaje_compartido", kind: "string"}, type: "range", value: "50", closest: (selector) => selector === "[data-path]" ? range : selector === ".movement-card" ? card : selector === ".sharing-control" ? {querySelector: () => output} : null};
+  const list = app.nodes.get("#movement-list");
+  const originalHTML = list.innerHTML;
+  let replacements = 0;
+  Object.defineProperty(list, "innerHTML", {get: () => originalHTML, set: () => { replacements++; }});
+  app.handleControl({target: range});
+  assert.equal(deduction.disabled, false);
+  assert.match(hint.textContent, /Solo con Tras compromisos/);
+  assert.equal(app.state.caso.movimientos[2].porcentaje_compartido, "50");
+  assert.equal(output.textContent, "50 %");
+  range.value = "100";
+  app.handleControl({target: range});
+  assert.equal(deduction.disabled, true);
+  assert.equal(hint.textContent, "Ya se reparte como gasto común.");
+  assert.equal(app.state.caso.movimientos[2].porcentaje_compartido, "100");
+  assert.equal(output.textContent, "100 %");
+  assert.equal(deduction.checked, true);
+  assert.equal(app.state.caso.movimientos[2].descontar_antes_reparto, true);
+  assert.equal(replacements, 0);
+});
+
+test("importar una deuda antigua la presenta como gasto conservando cuotas y descuento previo", async () => {
+  const app = createApp();
+  const old = movement("deuda-antigua", {tipo: "deuda", persona: "ella", pagador: "ella", importe: "100.01", porcentaje_compartido: "0", modalidad: "cuotas", importe_tipo: "cuota", cuotas: 46, cuotas_pagadas: 4});
+  await loadPlan(app, plan([...incomes(), old]));
+  const expense = app.state.caso.movimientos[2];
+  assert.equal(expense.tipo, "gasto");
+  assert.equal(expense.persona, "ella");
+  assert.equal(expense.pagador, "ella");
+  assert.equal(expense.modalidad, "cuotas");
+  assert.equal(expense.cuotas, 46);
+  assert.equal(expense.cuotas_pagadas, 4);
+  assert.equal(expense.importe, "100.01");
+  assert.equal(expense.descontar_antes_reparto, true);
+  assert.ok(app.state.result.meses.every((month) => month.cuotas_centimos_eur === 10001));
+  assert.equal(JSON.parse(app.storage.get("finanzas-pareja-plan-v2")).caso.movimientos[2].tipo, "gasto");
 });
 
 test("los nombres iniciales aparecen en el editor, los movimientos y los resultados", async () => {
@@ -340,7 +448,7 @@ test("añadir y editar un gasto aplica moneda, fecha, persona y recurrencia al r
 test("duplicar, eliminar y deshacer conserva todos los parámetros del movimiento", async () => {
   const app = createApp();
   await loadExample(app);
-  const index = app.state.caso.movimientos.findIndex((item) => item.tipo === "deuda");
+  const index = app.state.caso.movimientos.findIndex((item) => item.modalidad === "cuotas");
   const original = copy(app.state.caso.movimientos[index]), count = app.state.caso.movimientos.length;
   action(app, "[data-duplicate-movement]", {duplicateMovement: String(index)});
   const duplicated = copy(app.state.caso.movimientos.at(-1));

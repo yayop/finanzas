@@ -64,7 +64,7 @@
   function assignments(ctx) {
     const e = ctx.escapeHtml, movements = ctx.state.caso.movimientos;
     if (!movements.length) return '<p class="operation-empty">Sin registros</p>';
-    return `<div class="table-wrap"><table><thead><tr><th>Registro</th><th>Tipo</th><th>Cuenta</th></tr></thead><tbody>${movements.map((movement, index) => `<tr><th scope="row">${e(movement.concepto)}</th><td>${e(movement.tipo === "ingreso" ? "Ingreso" : movement.tipo === "deuda" ? "Deuda" : "Gasto")}</td><td><select class="operation-table-select" aria-label="Cuenta de ${e(movement.concepto)}" data-op-key="movement-${index}-cuenta_id" data-op-kind="movement" data-op-index="${index}" data-op-field="cuenta_id"><option value="">Sin cuenta</option>${assignmentOptions(movement, ctx.state.caso.cuentas, ctx).map(([id, name]) => `<option value="${e(id)}" ${id === movement.cuenta_id ? "selected" : ""}>${e(name)}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>Registro</th><th>Tipo</th><th>Cuenta</th></tr></thead><tbody>${movements.map((movement, index) => `<tr><th scope="row">${e(movement.concepto)}</th><td>${e(movement.tipo === "ingreso" ? "Ingreso" : "Gasto")}</td><td><select class="operation-table-select" aria-label="Cuenta de ${e(movement.concepto)}" data-op-key="movement-${index}-cuenta_id" data-op-kind="movement" data-op-index="${index}" data-op-field="cuenta_id"><option value="">Sin cuenta</option>${assignmentOptions(movement, ctx.state.caso.cuentas, ctx).map(([id, name]) => `<option value="${e(id)}" ${id === movement.cuenta_id ? "selected" : ""}>${e(name)}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function eventEUR(units, currency, rate) {
