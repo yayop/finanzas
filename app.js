@@ -11,6 +11,7 @@ const eur = (cents, decimals = null) => {
 const clp = (pesos) => new Intl.NumberFormat("es-CL", {maximumFractionDigits: 0}).format(pesos) + " CLP";
 const monthLabel = (month, short = false) => new Intl.DateTimeFormat("es-CL", {month: short ? "short" : "long", year: "numeric", timeZone: "UTC"}).format(new Date(month + "-01T12:00:00Z"));
 const RULES = {mitades: "50/50", proporcional: "Según ingresos", proporcional_disponible: "Tras compromisos", igualar: "Igualar margen", manual: "Porcentaje fijo"};
+const TABS = ["projection", "operations", "adjustments", "equivalence"];
 const TYPES = {ingreso: "Ingreso", gasto: "Gasto", deuda: "Deuda"};
 const DEFAULT_NAMES = {el: "Yayo", ella: "Fer"};
 const STORAGE_KEY = "finanzas-pareja-plan-v2";
@@ -313,7 +314,7 @@ async function calculate() {
 }
 
 function operativaContext() {
-  return {state, escapeHtml, eur, originalMoney, personName, selectMonth,
+  return {state, escapeHtml, eur, originalMoney, personName, selectMonth, monthLabel, RULES,
     changed: ({rerender = false} = {}) => {
       markEdited();
       if (rerender) renderControls(true);
@@ -323,13 +324,14 @@ function operativaContext() {
 
 function renderAuxiliary() {
   window.FinanzasOperativa?.render(operativaContext());
+  window.FinanzasEquivalencia?.render(operativaContext());
   renderAdjustments();
 }
 
 function setTab(tab) {
-  if (!["projection", "operations", "adjustments"].includes(tab)) return;
+  if (!TABS.includes(tab)) return;
   state.tab = tab;
-  for (const key of ["projection", "operations", "adjustments"]) {
+  for (const key of TABS) {
     const active = key === tab;
     $("#tab-" + key).setAttribute("aria-selected", String(active));
     $("#tab-" + key).tabIndex = active ? 0 : -1;
@@ -780,15 +782,16 @@ async function resetPlan() {
 }
 
 function bindEvents() {
-  for (const tab of ["projection", "operations", "adjustments"]) {
+  for (const tab of TABS) {
     $("#tab-" + tab).addEventListener("click", () => setTab(tab));
     $("#tab-" + tab).addEventListener("keydown", (event) => {
-      const keys = ["projection", "operations", "adjustments"], index = keys.indexOf(tab);
-      const next = event.key === "ArrowRight" ? keys[(index + 1) % 3] : event.key === "ArrowLeft" ? keys[(index + 2) % 3] : event.key === "Home" ? keys[0] : event.key === "End" ? keys[2] : null;
+      const keys = TABS, index = keys.indexOf(tab);
+      const next = event.key === "ArrowRight" ? keys[(index + 1) % keys.length] : event.key === "ArrowLeft" ? keys[(index + keys.length - 1) % keys.length] : event.key === "Home" ? keys[0] : event.key === "End" ? keys.at(-1) : null;
       if (next) { event.preventDefault(); setTab(next); $("#tab-" + next).focus(); }
     });
   }
   window.FinanzasOperativa?.bind(operativaContext());
+  window.FinanzasEquivalencia?.bind(operativaContext());
   $("#adjustments-content").addEventListener("input", handleAdjustment);
   $("#adjustments-content").addEventListener("change", (event) => { if (event.target.id === "adjustment-month") selectMonth(event.target.value); });
   $("#adjustments-content").addEventListener("click", (event) => {

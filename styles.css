@@ -266,7 +266,7 @@ tbody tr:last-child > * { border-bottom: 0; }
   .commitment-row { flex-wrap: wrap; gap: 7px; }
   .commitment-row > span { margin-left: auto; }
 }
-.workspace-tabs { display: flex; gap: 6px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
+.workspace-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
 .workspace-tabs button { min-height: 48px; padding: 11px 20px; border: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 16px; color: var(--muted); }
 .workspace-tabs button:hover { color: var(--text); background: #f0f3f0; }
 .workspace-tabs button[aria-selected=true] { color: var(--green); border-bottom-color: var(--green); font-weight: 600; }
@@ -325,6 +325,40 @@ tbody tr:last-child > * { border-bottom: 0; }
 .split-labels output { font-weight: 600; }
 .adjustment-summary { margin: 0 0 20px; }
 .adjustment-card .operation-note { margin-top: 13px; }
+#equivalence-content { display: grid; gap: 18px; min-width: 0; }
+.eq-toolbar { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.eq-toolbar h2 { margin-right: auto; align-self: center; }
+.eq-toolbar label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 14px; }
+.eq-toolbar select { width: auto; max-width: 100%; min-width: 190px; }
+.eq-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.eq-rate-card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.eq-person { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.eq-rate { display: block; margin-top: 12px; font-size: 34px; font-weight: 600; line-height: 1.2; letter-spacing: -.6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.eq-rate-card:first-child .eq-rate { color: var(--green); }
+.eq-rate-card:nth-child(2) .eq-rate { color: var(--blue); }
+.eq-rate-card .eq-note { margin-top: 10px; }
+.eq-rate-card dl { display: grid; gap: 10px; margin: 18px 0 0; font-size: 16px; }
+.eq-rate-card dl > div { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 5px 16px; }
+.eq-rate-card dt { color: var(--muted); }
+.eq-rate-card dd { margin: 0 0 0 auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.eq-note { color: var(--muted); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.eq-note:empty { display: none; }
+.eq-match { color: var(--green); font-weight: 500; }
+p.eq-match { font-size: 15px; }
+.eq-formula { padding: 16px 20px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); font-size: 16px; line-height: 1.7; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+#equivalence-content > .card > .eq-formula { border: 0; border-bottom: 1px solid var(--line); border-radius: 7px 7px 0 0; }
+#equivalence-content > .card > .eq-note { padding: 14px 20px; border-top: 1px solid var(--line); }
+.eq-empty { padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); }
+.eq-table { font-size: 16px; }
+.eq-table caption { padding: 16px 20px; color: var(--muted); font-size: 14px; text-align: left; }
+.eq-table th:first-child { min-width: 190px; white-space: normal; }
+.eq-table thead th { font-size: 14px; }
+.eq-table thead th:not(:first-child) { min-width: 110px; overflow-wrap: anywhere; white-space: normal; }
+.eq-table tbody th { font-weight: 500; }
+.eq-table small { display: block; margin-top: 3px; color: var(--muted); font-weight: 400; }
+.eq-segmented { flex-wrap: wrap; align-self: flex-start; }
+.eq-segmented button { min-height: 38px; padding: 8px 13px; font-size: 15px; }
+.eq-status { padding: 12px 16px; border: 1px solid #e6d9be; border-radius: 6px; background: #fffaf0; color: #86561c; font-size: 15px; overflow-wrap: anywhere; }
 @media (max-width: 999px) {
   .operations-grid { grid-template-columns: minmax(0, 1fr); }
   .operations-grid > .operations-stack:first-child { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -340,6 +374,23 @@ tbody tr:last-child > * { border-bottom: 0; }
   .operations-toolbar select, .adjustments-toolbar select { min-width: 0; max-width: 100%; }
   .operation-summary, .settlement-grid { grid-template-columns: minmax(0, 1fr); }
   .account-heading { align-items: flex-start; }
+  .eq-toolbar { align-items: stretch; gap: 12px; }
+  .eq-toolbar h2 { width: 100%; }
+  .eq-toolbar label { flex: 1 1 160px; }
+  .eq-toolbar select { width: 100%; min-width: 0; }
+  .eq-summary { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .eq-rate-card, .eq-empty { padding: 16px; }
+  .eq-rate { font-size: 32px; }
+  .eq-formula { padding: 14px 16px; }
+  #equivalence-content > .card > .eq-note { padding: 14px 16px; }
+  .eq-table caption { padding: 16px; }
+  .eq-table th, .eq-table td { padding: 11px 10px; }
+  .eq-table th:first-child { min-width: 135px; }
+}
+@media (max-width: 460px) {
+  .workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .eq-segmented { display: flex; width: 100%; }
+  .eq-segmented button { flex: 1; padding-left: 9px; padding-right: 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }

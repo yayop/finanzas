@@ -338,6 +338,68 @@ def _asignacion(escenario, mes, comunes, considerados, personales):
     return {"el": el, "ella": comunes - el}
 
 
+def _reparto_equivalente(escenario, reales, considerados, personales, comunes, asignacion):
+    """Expresa el costo mensual ya acordado como una tasa sobre todo el gasto.
+
+    Las tasas viajan como fracciones de texto: no se redondean porcentajes para
+    volver a calcular dinero. El costo de partida incluye gastos asignados antes
+    del reparto global (también repartos fijos y comisiones de cambio). Los
+    excedentes son flujo mensual y no incluyen saldos previos ni revalorización.
+    """
+    def fracciones(valores):
+        if valores is None:
+            return None
+        return {p: {"numerador": str(valores[p].numerator),
+                    "denominador": str(valores[p].denominator)} for p in PERSONAS}
+
+    regla = escenario["regla"]
+    base = {p: considerados[p] - (personales[p] if regla == "proporcional_disponible" else 0)
+            for p in PERSONAS}
+    alpha = None
+    if regla == "mitades":
+        alpha = {p: Fraction(1, 2) for p in PERSONAS}
+    elif regla == "manual":
+        parte = Fraction(_porcentaje(escenario["porcentaje_el"], "porcentaje_el")) / 100
+        alpha = {"el": parte, "ella": 1 - parte}
+    elif regla in ("proporcional", "proporcional_disponible"):
+        if all(valor >= 0 for valor in base.values()) and sum(base.values()) > 0:
+            alpha = {p: Fraction(base[p], sum(base.values())) for p in PERSONAS}
+    elif comunes:
+        # Igualar puede incluir una compensación además del gasto común.
+        alpha = {p: Fraction(asignacion[p], comunes) for p in PERSONAS}
+    efectiva = {p: Fraction(asignacion[p], comunes) for p in PERSONAS} if comunes else None
+    costos = {p: personales[p] + asignacion[p] for p in PERSONAS}
+    excedentes = {p: reales[p] - costos[p] for p in PERSONAS}
+    total = sum(personales.values()) + comunes
+    alpha_prima = None
+    if total:
+        estado = "calculado"
+        alpha_prima = {p: Fraction(costos[p], total) for p in PERSONAS}
+        costos_equivalentes = {p: _redondear(alpha_prima[p] * total) for p in PERSONAS}
+        excedentes_equivalentes = {p: reales[p] - costos_equivalentes[p] for p in PERSONAS}
+        diferencia = {p: excedentes_equivalentes[p] - excedentes[p] for p in PERSONAS}
+    elif not any(costos.values()):
+        estado = "sin_gastos"
+        costos_equivalentes = _cero()
+        excedentes_equivalentes = dict(reales)
+        diferencia = _cero()
+    else:
+        # Una tasa multiplicada por cero no representa transferencias de renta.
+        estado = "no_representable_sin_gastos"
+        costos_equivalentes = excedentes_equivalentes = diferencia = None
+    return {"estado": estado,
+            "gastos_previos_centimos_eur": dict(personales),
+            "gastos_comunes_centimos_eur": comunes, "total_gastos_centimos_eur": total,
+            "base_reparto_centimos_eur": base, "alpha": fracciones(alpha),
+            "alpha_efectiva_comunes": fracciones(efectiva), "alpha_prima": fracciones(alpha_prima),
+            "costos_originales_centimos_eur": costos,
+            "costos_equivalentes_centimos_eur": costos_equivalentes,
+            "excedentes_originales_centimos_eur": excedentes,
+            "excedentes_equivalentes_centimos_eur": excedentes_equivalentes,
+            "diferencia_centimos_eur": diferencia,
+            "tasas_fuera_de_rango": bool(alpha_prima and any(valor < 0 or valor > 1 for valor in alpha_prima.values()))}
+
+
 def _comprobar_enteros(valor):
     if isinstance(valor, dict):
         for contenido in valor.values():
@@ -437,7 +499,8 @@ def simular_plan(caso, escenario):
                 "saldo_final_centimos_eur": dict(saldos), "clp_comprados": compras,
                 "coste_compra_clp_centimos_eur": costes_compras,
                 "necesita_financiacion": {p: saldos[p] < 0 for p in PERSONAS}, "pagos": pagos, "ingresos": ingresos,
-                "cuotas_centimos_eur": cuotas_eur, "cuotas_clp": cuotas_clp}
+                "cuotas_centimos_eur": cuotas_eur, "cuotas_clp": cuotas_clp,
+                "reparto_equivalente": _reparto_equivalente(escenario, reales, considerados, personales, comunes, asignacion)}
         if operativa:
             fila["ajuste_cuentas_centimos_eur"] = ajuste
         for tipo in ("universidad", "ayuda", "deuda_fija"):
