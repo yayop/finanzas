@@ -8,6 +8,7 @@
     <title>Finanzas</title>
     <link rel="stylesheet" href="styles.css">
     <script src="operativa.js" defer></script>
+    <script src="equivalencia.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -28,6 +29,7 @@
         <button type="button" id="tab-projection" role="tab" data-tab="projection" aria-controls="panel-projection" aria-selected="true">Proyección</button>
         <button type="button" id="tab-operations" role="tab" data-tab="operations" aria-controls="panel-operations" aria-selected="false" tabindex="-1">Operativa</button>
         <button type="button" id="tab-adjustments" role="tab" data-tab="adjustments" aria-controls="panel-adjustments" aria-selected="false" tabindex="-1">Ajustes</button>
+        <button type="button" id="tab-equivalence" role="tab" data-tab="equivalence" aria-controls="panel-equivalence" aria-selected="false" tabindex="-1">Equivalencia</button>
       </nav>
       <section id="panel-projection" class="tab-panel" role="tabpanel" aria-labelledby="tab-projection">
        <div class="workspace-grid">
@@ -62,6 +64,9 @@
       </section>
       <section id="panel-adjustments" class="tab-panel" role="tabpanel" aria-labelledby="tab-adjustments" hidden>
         <div id="adjustments-content"></div>
+      </section>
+      <section id="panel-equivalence" class="tab-panel" role="tabpanel" aria-labelledby="tab-equivalence" hidden>
+        <div id="equivalence-content"></div>
       </section>
       <noscript><p class="error-banner">Activa JavaScript para usar el simulador.</p></noscript>
     </main>

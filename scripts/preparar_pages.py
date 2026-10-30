@@ -8,7 +8,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 DESTINO = RAIZ / "dist"
-WEB = ("index.html", "styles.css", "app.js", "operativa.js", "browser-model.js", "model-worker.js")
+WEB = ("index.html", "styles.css", "app.js", "operativa.js", "equivalencia.js", "browser-model.js", "model-worker.js")
 MODULOS = ("modelo.py", "operativa.py", "migracion.py", "simular_ejemplo.py")
 
 
@@ -38,7 +38,7 @@ def preparar():
             huella.update(str(archivo.relative_to(DESTINO)).encode("utf-8"))
             huella.update(archivo.read_bytes())
     version = huella.hexdigest()[:12]
-    for recurso in ("styles.css", "operativa.js", "browser-model.js", "app.js"):
+    for recurso in ("styles.css", "operativa.js", "equivalencia.js", "browser-model.js", "app.js"):
         contenido = contenido.replace('"' + recurso + '"', '"' + recurso + '?v=' + version + '"')
     pagina.write_text(contenido, encoding="utf-8")
     (DESTINO / ".nojekyll").touch()

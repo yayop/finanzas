@@ -42,6 +42,7 @@ Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «V
 - Comisión fija en EUR por cada transferencia entre monedas, cargada en la cuenta de origen.
 - Asignación de cada ingreso o pago a una cuenta y calendario de caja con saldos mínimos.
 - Pestaña Ajustes con sliders del reparto de cada gasto compartido.
+- Pestaña Equivalencia con la tasa sobre gastos comunes y su equivalente sobre todos los gastos, conservando el excedente de cada persona.
 - Grupos, etiquetas y marcas de gastos en el gráfico, con series mensuales o acumuladas.
 - Referencia para comparar cambios, exportación e importación de planes JSON.
 
@@ -59,7 +60,7 @@ Los planes de la versión anterior se convierten al formato de movimientos conse
 
 ## Alcance del cálculo
 
-Los resultados son mensuales y previos a reservar ahorro. Los movimientos conservan su moneda original y se presentan en EUR, usando un tipo de cambio constante editable y sin comisiones. Los saldos iniciales se introducen en EUR.
+Los resultados son mensuales y previos a reservar ahorro. Los movimientos conservan su moneda original y se presentan en EUR, usando un tipo de cambio constante editable. Las conversiones planificadas entre cuentas pueden incluir la comisión configurada. Los saldos sin cuenta se introducen en EUR y los de cada cuenta en su moneda.
 
 La pestaña Operativa calcula la caja por cuenta en las fechas registradas. Si coinciden pagos e ingresos en una fecha, considera primero las salidas para mostrar un mínimo conservador; no conoce las horas bancarias. Las transferencias son planificación y no se ejecutan. El modelo no conecta con bancos ni calcula derechos o importes legales de prestaciones. Un saldo negativo indica dinero por cubrir; no genera un crédito automático.
 
@@ -74,6 +75,12 @@ Los saldos iniciales de las cuentas se suman al «Saldo sin cuenta» de cada per
 «Comisión por cambio» cobra una vez por cada transferencia positiva entre monedas distintas. No se cobra por mostrar una equivalencia en EUR ni por pagar con dinero que ya existe en la moneda del gasto. La comisión la asume el titular de la cuenta de origen o, si es común, su reparto configurado. El valor inicial es cero y se puede editar.
 
 Los sliders fijan el porcentaje de cada gasto compartido. «Regla general» devuelve un registro al reparto global. «Igualar margen» puede compensar indirectamente los cambios de un slider mediante otros aportes.
+
+En Equivalencia, «Tras compromisos» reparte los gastos comunes según el ingreso considerado menos los gastos ya asignados a cada persona. Los gastos personales, los repartos fijos y las comisiones forman esos gastos previos; los compartidos con «Regla general» forman el gasto común. Por ejemplo, para que alguien asuma un compromiso y aporte proporcionalmente menos al arriendo, el compromiso debe quedar asignado a esa persona y el arriendo usar «Regla general».
+
+«Por compromisos» muestra la tasa sobre gastos comunes; «Tasa única» muestra el porcentaje equivalente sobre el gasto total: `α′k = (Gk + αk × Gc) / (Gc + G1 + G2)`. Cambiar esta presentación conserva costos, excedentes, pagadores y transferencias. La regla base sí cambia el acuerdo. Las tasas se calculan por mes a partir de los costos exactos en céntimos; los porcentajes mostrados están redondeados y no se usan para recalcular dinero. El excedente incluye los ingresos reales, aunque se excluyan ingresos extra de la base del reparto, y no incluye ahorro ni revalorizaciones del saldo por cambio de divisa.
+
+Sin gastos, la tasa única queda sin definir. Si «Igualar margen» redistribuye ingresos con gasto total cero, no existe una tasa equivalente sobre ese total. Una tasa fuera de 0–100 % indica que el acuerdo incluye recibir dinero, además de pagar gastos.
 
 Un grupo reúne gastos sin duplicarlos. Un gasto puede tener varias etiquetas; por eso las series de etiquetas pueden superponerse. «Marcar en gráfico» señala los meses de ese gasto y muestra su concepto e importe al seleccionarlos.
 
@@ -103,6 +110,7 @@ python3 -m unittest discover -s pruebas
 node --test pruebas/interfaz.test.cjs
 node --test pruebas/browser-runtime.test.cjs
 node --test pruebas/aportes.test.cjs
+node --test pruebas/equivalencia_ui.test.cjs
 ```
 
 ## Preparar la versión web

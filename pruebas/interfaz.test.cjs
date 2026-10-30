@@ -57,7 +57,7 @@ function createApp(saved = {}) {
     return value;
   }
   document = {querySelector: node, querySelectorAll: (selector) => {
-    if (selector === "[data-tab]") return ["projection", "operations", "adjustments"].map((name) => {
+    if (selector === "[data-tab]") return ["projection", "operations", "adjustments", "equivalence"].map((name) => {
       const tab = node("#tab-" + name); tab.dataset.tab = name; return tab;
     });
     return [];
@@ -72,6 +72,7 @@ function createApp(saved = {}) {
     clearTimeout: (id) => timers.delete(id)
   });
   if (operationSource) vm.runInContext(operationSource, context, {filename: "web/operativa.js"});
+  vm.runInContext(readFileSync(path.join(root, "web/equivalencia.js"), "utf8"), context, {filename: "web/equivalencia.js"});
   vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan, handleAdjustment, setTab, expenseSeries, chartData, exportablePlan};", context, {filename: "web/app.js"});
   return {...context.app, nodes, storage};
 }
@@ -143,6 +144,36 @@ test("cada apertura inicia vacía, con saldos en cero y sin movimientos", async 
   assert.equal(app.state.caso.inicio, current);
   assert.equal(app.state.result.meses.length, 12);
   assert.equal(app.storage.has("finanzas-pareja-plan-v2"), false);
+  assert.match(app.nodes.get("#equivalence-content").innerHTML, /Sin gastos: α′ no está definida/);
+});
+
+test("Equivalencia cambia de presentación sin modificar el plan y aplica la regla base al cálculo real", async () => {
+  const app = createApp();
+  const input = plan([...incomes().map((item) => ({...item, importe: "2000.00"})),
+    movement("compromiso", {persona: "ella", pagador: "ella", importe: "1000.00", porcentaje_compartido: "0"}),
+    movement("comun", {importe: "1500.00", reparto: "regla"})]);
+  await loadPlan(app, input);
+  await fire(app, "#tab-equivalence");
+  assert.equal(app.nodes.get("#panel-equivalence").hidden, false);
+  assert.equal(app.nodes.get("#panel-projection").hidden, true);
+  const initialPlan = copy(app.exportablePlan()), initialRows = copy(app.state.result);
+  const button = {dataset: {eqPerspective: "unica"}};
+  for (const callback of app.nodes.get("#equivalence-content").listeners.get("click")) {
+    callback({target: {closest: (selector) => selector === "[data-eq-perspective]" ? button : null}});
+  }
+  assert.deepEqual(copy(app.exportablePlan()), initialPlan);
+  assert.deepEqual(copy(app.state.result), initialRows);
+  assert.match(app.nodes.get("#equivalence-content").innerHTML, /α′ de todos los gastos/);
+  const rule = {value: "proporcional_disponible"};
+  for (const callback of app.nodes.get("#equivalence-content").listeners.get("change")) {
+    callback({target: {closest: (selector) => selector === "[data-eq-rule]" ? rule : null}});
+  }
+  await app.calculate();
+  assert.equal(app.state.escenario.regla, "proporcional_disponible");
+  assert.deepEqual(copy(row(app).flujo_libre_centimos_eur), {el: 100000, ella: 50000});
+  assert.deepEqual(copy(row(app).reparto_equivalente.excedentes_equivalentes_centimos_eur), {el: 100000, ella: 50000});
+  assert.deepEqual(copy(app.state.caso), {...initialPlan.caso, es_ficticio: false});
+  assert.equal(JSON.parse(app.storage.get("finanzas-pareja-plan-v2")).escenario.regla, "proporcional_disponible");
 });
 
 test("abrir no recupera ni reemplaza automáticamente el último plan guardado", async () => {
@@ -572,7 +603,7 @@ test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la refere
   for (const tab of ["operations", "adjustments", "projection"]) {
     app.setTab(tab);
     assert.equal(app.nodes.get("#tab-" + tab)["aria-selected"], "true");
-    for (const panel of ["projection", "operations", "adjustments"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
+    for (const panel of ["projection", "operations", "adjustments", "equivalence"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
   }
   app.state.chartView = "grupos";
   app.chartData();
