@@ -80,15 +80,14 @@
     context = ctx;
     const element = host();
     if (!element || !ctx.state.caso) return;
-    const {state, escapeHtml: e} = ctx;
+    const {state} = ctx;
     const focus = document.activeElement;
     const focusKey = focus && element.contains(focus) ? focus.dataset?.eqKey : null;
     const rows = state.result?.meses || [];
     const selected = state.selected || state.caso.inicio;
     const row = rows.find((item) => item.mes === selected);
     const value = row?.reparto_equivalente;
-    const months = rows.length ? rows : [{mes: selected}].filter((item) => item.mes);
-    element.innerHTML = `<div class="eq-toolbar"><h2>Equivalencia</h2><label class="month-select-label"><span>Mes</span><select class="select-control" data-eq-month data-eq-key="month" aria-label="Mes de equivalencia">${months.map((item) => `<option value="${e(item.mes)}" ${item.mes === selected ? "selected" : ""}>${e(ctx.monthLabel(item.mes))}</option>`).join("")}</select></label><label class="month-select-label"><span>Regla base</span><select class="select-control" data-eq-rule data-eq-key="rule" aria-label="Regla base de equivalencia">${Object.entries(ctx.RULES).map(([rule, label]) => `<option value="${e(rule)}" ${rule === state.escenario.regla ? "selected" : ""}>${e(label)}</option>`).join("")}</select></label></div>${value ? `<div class="eq-segmented segmented" role="group" aria-label="Presentación del reparto"><button type="button" data-eq-perspective="compromisos" data-eq-key="compromisos" aria-pressed="${perspective === "compromisos"}">Por compromisos</button><button type="button" data-eq-perspective="unica" data-eq-key="unica" aria-pressed="${perspective === "unica"}">Tasa única</button></div>${summary(ctx, value)}${notes(ctx, row, value)}<section class="card">${formula(ctx)}${table(ctx, row, value)}<p class="eq-note">Tasas redondeadas para mostrar. Los costos y excedentes conservan los céntimos del cálculo. Excedente mensual antes de ahorro y ajustes de cambio.</p></section>` : '<p class="eq-empty">Pendiente de cálculo</p>'}`;
+    element.innerHTML = `<div class="eq-toolbar"><h2>Equivalencia</h2></div>${value ? `<div class="eq-segmented segmented" role="group" aria-label="Presentación del reparto"><button type="button" data-eq-perspective="compromisos" data-eq-key="compromisos" aria-pressed="${perspective === "compromisos"}">Por compromisos</button><button type="button" data-eq-perspective="unica" data-eq-key="unica" aria-pressed="${perspective === "unica"}">Tasa única</button></div>${summary(ctx, value)}${notes(ctx, row, value)}<section class="card">${formula(ctx)}${table(ctx, row, value)}<p class="eq-note">Tasas redondeadas para mostrar. Los costos y excedentes conservan los céntimos del cálculo. Excedente mensual antes de ahorro y ajustes de cambio.</p></section>` : '<p class="eq-empty">Pendiente de cálculo</p>'}`;
     if (focusKey) element.querySelector(`[data-eq-key="${focusKey}"]`)?.focus({preventScroll: true});
   }
 
@@ -97,15 +96,6 @@
     const element = host();
     if (!element || bound.has(element)) return;
     bound.add(element);
-    element.addEventListener("change", (event) => {
-      if (!context) return;
-      const month = event.target.closest("[data-eq-month]");
-      if (month) { context.selectMonth(month.value); return; }
-      const rule = event.target.closest("[data-eq-rule]");
-      if (!rule || !Object.hasOwn(context.RULES, rule.value) || context.state.escenario.regla === rule.value) return;
-      context.state.escenario.regla = rule.value;
-      context.changed({rerender: true});
-    });
     element.addEventListener("click", (event) => {
       const button = event.target.closest("[data-eq-perspective]");
       if (!context || !button || !["compromisos", "unica"].includes(button.dataset.eqPerspective)) return;

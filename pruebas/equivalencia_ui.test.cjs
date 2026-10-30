@@ -104,32 +104,31 @@ test("descontar un gasto modifica la base neta y conserva todos los gastos en la
   assert.doesNotMatch(ui.element.innerHTML, /Descontados antes de repartir · D|Neto de reparto es ingreso considerado menos gastos seleccionados/);
 });
 
-test("delegación única, selección de mes compartida y perspectiva persistente al recalcular", () => {
+test("delegación única y perspectiva persistente al cambiar el mes desde Reparto", () => {
   const plan = fixture();
   plan.caso.fin = "2026-02";
   plan.caso.movimientos.forEach((record) => {record.modalidad = "recurrente"; record.intervalo_meses = 1;});
   const ui = harness(plan);
   ui.api.bind(ui.context);
-  assert.equal(ui.callbacks.get("change").length, 1);
+  assert.equal(ui.callbacks.has("change"), false);
   assert.equal(ui.callbacks.get("click").length, 1);
   ui.emit("click", "[data-eq-perspective]", {dataset: {eqPerspective: "unica"}});
-  ui.emit("change", "[data-eq-month]", {value: "2026-02"});
+  ui.context.selectMonth("2026-02");
   assert.deepEqual(ui.months, ["2026-02"]);
   assert.equal(ui.state.selected, "2026-02");
   assert.match(ui.element.innerHTML, /data-eq-perspective="unica"[^>]+aria-pressed="true"/);
   assert.equal(ui.changes.length, 0);
 });
 
-test("la regla base pide recalcular pero conserva registros y resultados hasta recibir el nuevo cálculo", () => {
-  const ui = harness(), before = JSON.stringify({caso: ui.state.caso, result: ui.state.result});
-  for (const rule of Object.keys(RULES)) assert.ok(ui.element.innerHTML.includes(`value="${rule}"`));
+test("Equivalencia usa el mes y regla de Reparto sin duplicar controles", () => {
+  const ui = harness(), before = JSON.stringify(ui.state);
+  assert.match(ui.element.innerHTML, /<h2>Equivalencia<\/h2>/);
+  assert.doesNotMatch(ui.element.innerHTML, /<select|data-eq-month|data-eq-rule|Regla base/);
   ui.emit("change", "[data-eq-rule]", {value: "mitades"});
-  assert.equal(ui.state.escenario.regla, "mitades");
-  assert.deepEqual(ui.changes, [{rerender: true}]);
-  assert.equal(JSON.stringify({caso: ui.state.caso, result: ui.state.result}), before);
-  ui.emit("change", "[data-eq-rule]", {value: "mitades"});
-  ui.emit("change", "[data-eq-rule]", {value: "desconocida"});
-  assert.equal(ui.changes.length, 1);
+  ui.emit("change", "[data-eq-month]", {value: "2026-02"});
+  assert.equal(JSON.stringify(ui.state), before);
+  assert.equal(ui.changes.length, 0);
+  assert.deepEqual(ui.months, []);
 });
 
 test("distingue 50/50 teórico del redondeo de un gasto de 1,01 EUR", () => {
@@ -203,9 +202,9 @@ test("escapa nombres y mantiene el foco del control al actualizar", () => {
   assert.doesNotMatch(ui.element.innerHTML, /<img/);
   assert.match(ui.element.innerHTML, /&lt;img/);
   let focused = false;
-  ui.document.activeElement = {dataset: {eqKey: "rule"}};
+  ui.document.activeElement = {dataset: {eqKey: "unica"}};
   ui.element.contains = () => true;
-  ui.element.querySelector = (selector) => selector === '[data-eq-key="rule"]' ? {focus: () => {focused = true;}} : null;
+  ui.element.querySelector = (selector) => selector === '[data-eq-key="unica"]' ? {focus: () => {focused = true;}} : null;
   ui.api.render(ui.context);
   assert.equal(focused, true);
 });

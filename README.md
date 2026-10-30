@@ -28,6 +28,8 @@ python3 scripts/servidor.py --port 8766
 
 Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «Vaciar» vuelve a ese estado. «Recuperar» carga el último plan guardado en ese navegador.
 
+Las pestañas siguen el orden Proyección, Reparto y Operativa. Proyección contiene los registros y resultados generales. Reparto reúne la regla general, la inclusión de ingresos extra, los ajustes por gasto, la comparación de tasas equivalentes y el detalle del mes. Operativa queda al final para organizar cuentas y transferencias. El selector de mes de Reparto se comparte entre sus resultados y ajustes.
+
 - Nombres editables para ambas personas.
 - Ingresos y gastos con conceptos libres en EUR o CLP; las deudas se registran como gastos en cuotas.
 - Pagos únicos, recurrencias cada uno a doce meses y planes de cuotas.
@@ -42,8 +44,8 @@ Cada apertura comienza con un plan vacío, saldos en cero y sin movimientos. «V
 - Pestaña Operativa con cuentas individuales o comunes, moneda, saldos y transferencias planificadas.
 - Comisión fija en EUR por cada transferencia entre monedas, cargada en la cuenta de origen.
 - Asignación de cada ingreso o pago a una cuenta y calendario de caja con saldos mínimos.
-- Pestaña Ajustes con sliders del reparto de cada gasto compartido.
-- Pestaña Equivalencia con la tasa sobre gastos comunes y su equivalente sobre todos los gastos, conservando el excedente de cada persona.
+- Pestaña Reparto con la regla general y sliders del reparto de cada gasto compartido.
+- Comparación de equivalencia dentro de Reparto: tasa sobre gastos comunes y su equivalente sobre todos los gastos, conservando el excedente de cada persona.
 - Grupos, etiquetas y marcas de gastos en el gráfico, con series mensuales o acumuladas.
 - Referencia para comparar cambios, exportación e importación de planes JSON.
 
@@ -77,9 +79,9 @@ Los saldos iniciales de las cuentas se suman al «Saldo sin cuenta» de cada per
 
 «Comisión por cambio» cobra una vez por cada transferencia positiva entre monedas distintas. No se cobra por mostrar una equivalencia en EUR ni por pagar con dinero que ya existe en la moneda del gasto. La comisión la asume el titular de la cuenta de origen o, si es común, su reparto configurado. El valor inicial es cero y se puede editar.
 
-Los sliders fijan el porcentaje de cada gasto compartido. «Regla general» devuelve un registro al reparto global. «Igualar margen» puede compensar indirectamente los cambios de un slider mediante otros aportes.
+Los sliders de Reparto fijan el porcentaje de cada gasto compartido. «Regla general» devuelve un registro al reparto global. «Igualar margen» puede compensar indirectamente los cambios de un slider mediante otros aportes.
 
-En Equivalencia, «Tras compromisos» reparte los gastos comunes según el ingreso considerado menos los gastos marcados para descontar. Si `Dk` es la parte marcada que ya se asignó a cada persona, la tasa es `αk = (Ik − Dk) / (I1 + I2 − D1 − D2)`. Un gasto personal parcialmente compartido solo descuenta su parte previamente asignada; un gasto con reparto fijo puede descontar la parte de cada persona. Los compartidos con «Regla general» forman el gasto común y no se descuentan también de la base. Las comisiones de cambio se mantienen como compromisos previos de quien las asume. Por ejemplo, para que alguien asuma un compromiso y aporte proporcionalmente menos al arriendo, hay que marcar ese compromiso y usar «Regla general» en el arriendo.
+Dentro de Reparto, «Tras compromisos» reparte los gastos comunes según el ingreso considerado menos los gastos marcados para descontar. Si `Dk` es la parte marcada que ya se asignó a cada persona, la tasa es `αk = (Ik − Dk) / (I1 + I2 − D1 − D2)`. Un gasto personal parcialmente compartido solo descuenta su parte previamente asignada; un gasto con reparto fijo puede descontar la parte de cada persona. Los compartidos con «Regla general» forman el gasto común y no se descuentan también de la base. Las comisiones de cambio se mantienen como compromisos previos de quien las asume. Por ejemplo, para que alguien asuma un compromiso y aporte proporcionalmente menos al arriendo, hay que marcar ese compromiso y usar «Regla general» en el arriendo.
 
 «Por compromisos» muestra la tasa sobre gastos comunes; «Tasa única» muestra el porcentaje equivalente sobre el gasto total: `α′k = (Gk + αk × Gc) / (Gc + G1 + G2)`. Aquí `Gk` incluye todos los gastos previamente asignados, marcados o no: siempre reducen el excedente. Cambiar esta presentación conserva costos, excedentes, pagadores y transferencias. La regla base sí cambia el acuerdo. Las tasas se calculan por mes a partir de los costos exactos en céntimos; los porcentajes mostrados están redondeados y no se usan para recalcular dinero. El excedente incluye los ingresos reales, aunque se excluyan ingresos extra de la base del reparto, y no incluye ahorro ni revalorizaciones del saldo por cambio de divisa.
 

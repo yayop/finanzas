@@ -57,7 +57,7 @@ function createApp(saved = {}) {
     return value;
   }
   document = {querySelector: node, querySelectorAll: (selector) => {
-    if (selector === "[data-tab]") return ["projection", "operations", "adjustments", "equivalence"].map((name) => {
+    if (selector === "[data-tab]") return ["projection", "sharing", "operations"].map((name) => {
       const tab = node("#tab-" + name); tab.dataset.tab = name; return tab;
     });
     return [];
@@ -147,15 +147,19 @@ test("cada apertura inicia vacía, con saldos en cero y sin movimientos", async 
   assert.match(app.nodes.get("#equivalence-content").innerHTML, /Sin gastos: α′ no está definida/);
 });
 
-test("Equivalencia cambia de presentación sin modificar el plan y aplica la regla base al cálculo real", async () => {
+test("Reparto reúne la regla, el mes y la equivalencia conservando el plan al cambiar de presentación", async () => {
   const app = createApp();
   const input = plan([...incomes().map((item) => ({...item, importe: "2000.00"})),
     movement("compromiso", {persona: "ella", pagador: "ella", importe: "1000.00", porcentaje_compartido: "0"}),
     movement("comun", {importe: "1500.00", reparto: "regla"})]);
   await loadPlan(app, input);
-  await fire(app, "#tab-equivalence");
-  assert.equal(app.nodes.get("#panel-equivalence").hidden, false);
+  await fire(app, "#tab-sharing");
+  assert.equal(app.nodes.get("#panel-sharing").hidden, false);
   assert.equal(app.nodes.get("#panel-projection").hidden, true);
+  assert.match(app.nodes.get("#sharing-controls").innerHTML, /data-path="escenario\.regla"/);
+  assert.match(app.nodes.get("#sharing-controls").innerHTML, /data-path="escenario\.incluir_extra"/);
+  assert.doesNotMatch(app.nodes.get("#controls").innerHTML, /data-path="escenario\./);
+  assert.doesNotMatch(app.nodes.get("#equivalence-content").innerHTML, /data-eq-(?:month|rule)/);
   const initialPlan = copy(app.exportablePlan()), initialRows = copy(app.state.result);
   const button = {dataset: {eqPerspective: "unica"}};
   for (const callback of app.nodes.get("#equivalence-content").listeners.get("click")) {
@@ -164,9 +168,15 @@ test("Equivalencia cambia de presentación sin modificar el plan y aplica la reg
   assert.deepEqual(copy(app.exportablePlan()), initialPlan);
   assert.deepEqual(copy(app.state.result), initialRows);
   assert.match(app.nodes.get("#equivalence-content").innerHTML, /α′ de todos los gastos/);
-  const rule = {value: "proporcional_disponible"};
-  for (const callback of app.nodes.get("#equivalence-content").listeners.get("change")) {
-    callback({target: {closest: (selector) => selector === "[data-eq-rule]" ? rule : null}});
+  app.nodes.get("#sharing-month").value = "2026-12";
+  await fire(app, "#sharing-month", "change");
+  assert.equal(app.state.selected, "2026-12");
+  assert.match(app.nodes.get("#month-detail").innerHTML, /diciembre de 2026/);
+  assert.deepEqual(copy(app.exportablePlan()), initialPlan);
+  assert.deepEqual(copy(app.state.result), initialRows);
+  const rule = {value: "proporcional_disponible", dataset: {path: "escenario.regla"}, tagName: "SELECT", type: "select-one", closest: (selector) => selector === "[data-path]" ? rule : null};
+  for (const callback of app.nodes.get("#sharing-controls").listeners.get("change")) {
+    callback({target: rule});
   }
   await app.calculate();
   assert.equal(app.state.escenario.regla, "proporcional_disponible");
@@ -708,11 +718,30 @@ test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la refere
   await loadExample(app);
   const planBefore = copy({caso: app.state.caso, escenario: app.state.escenario, reference: app.state.reference});
   const resultBefore = copy(app.state.result);
-  for (const tab of ["operations", "adjustments", "projection"]) {
+  for (const tab of ["sharing", "operations", "projection"]) {
     app.setTab(tab);
     assert.equal(app.nodes.get("#tab-" + tab)["aria-selected"], "true");
-    for (const panel of ["projection", "operations", "adjustments", "equivalence"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
+    for (const panel of ["projection", "sharing", "operations"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
   }
+  const navigate = (tab, key) => {
+    for (const callback of app.nodes.get("#tab-" + tab).listeners.get("keydown")) callback({key, preventDefault() {}});
+    return app.state.tab;
+  };
+  assert.equal(navigate("projection", "ArrowRight"), "sharing");
+  assert.equal(navigate("sharing", "ArrowRight"), "operations");
+  assert.equal(navigate("operations", "ArrowRight"), "projection");
+  assert.equal(navigate("projection", "ArrowLeft"), "operations");
+  assert.equal(navigate("operations", "Home"), "projection");
+  assert.equal(navigate("projection", "End"), "operations");
+  assert.equal(navigate("operations", "Home"), "projection");
+  const monthButton = {dataset: {month: "2026-12"}};
+  for (const callback of app.nodes.get("#monthly-table").listeners.get("click")) {
+    callback({target: {closest: (selector) => selector === "[data-month]" ? monthButton : null}});
+  }
+  assert.equal(app.state.selected, "2026-12");
+  assert.equal(app.state.tab, "sharing");
+  assert.match(app.nodes.get("#month-detail").innerHTML, /diciembre de 2026/);
+  app.setTab("projection");
   app.state.chartView = "grupos";
   app.chartData();
   app.state.chartView = "etiquetas";

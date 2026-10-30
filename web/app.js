@@ -11,7 +11,7 @@ const eur = (cents, decimals = null) => {
 const clp = (pesos) => new Intl.NumberFormat("es-CL", {maximumFractionDigits: 0}).format(pesos) + " CLP";
 const monthLabel = (month, short = false) => new Intl.DateTimeFormat("es-CL", {month: short ? "short" : "long", year: "numeric", timeZone: "UTC"}).format(new Date(month + "-01T12:00:00Z"));
 const RULES = {mitades: "50/50", proporcional: "Según ingresos", proporcional_disponible: "Tras compromisos", igualar: "Igualar margen", manual: "Porcentaje fijo"};
-const TABS = ["projection", "operations", "adjustments", "equivalence"];
+const TABS = ["projection", "sharing", "operations"];
 const TYPES = {ingreso: "Ingreso", gasto: "Gasto"};
 const DEFAULT_NAMES = {el: "Yayo", ella: "Fer"};
 const STORAGE_KEY = "finanzas-pareja-plan-v2";
@@ -138,23 +138,27 @@ async function preparePlan(data) {
 
 function renderControls(preserve = false) {
   const open = new Set([...document.querySelectorAll("details[open][data-section]")].map((el) => el.dataset.section));
-  const c = state.caso, e = state.escenario;
+  const c = state.caso;
   const people = `<div class="field-grid">${["el", "ella"].map((person, i) => field(`caso.personas.${person}.nombre`, `Nombre ${i + 1}`, {type: "text", value: c.personas[person].nombre, maxLength: 100})).join("")}</div>`;
-  const rules = selectField("escenario.regla", "Regla general", e.regla, Object.entries(RULES), true)
-    + `<div id="manual-field" ${e.regla === "manual" ? "" : "hidden"}>${field("escenario.porcentaje_el", "Parte de " + personName("el"), {value: e.porcentaje_el, suffix: "%", max: 100, step: "any", disabled: e.regla !== "manual"})}</div>`
-    + toggle("escenario.incluir_extra", "Incluir extras en el reparto", e.incluir_extra)
-    + `<span id="rule-help" hidden></span>`;
   const period = `<div class="field-grid">${field("caso.inicio", "Desde", {type: "month", value: c.inicio})}${field("caso.fin", "Hasta", {type: "month", value: c.fin})}${field("caso.clp_por_eur", "Cambio", {value: c.clp_por_eur, suffix: "CLP / €", min: 0.01, wide: true})}${field("caso.personas.el.saldo_inicial_eur", "Saldo inicial de " + personName("el"), {value: c.personas.el.saldo_inicial_eur, suffix: "€", min: -100000000})}${field("caso.personas.ella.saldo_inicial_eur", "Saldo inicial de " + personName("ella"), {value: c.personas.ella.saldo_inicial_eur, suffix: "€", min: -100000000})}</div>`;
   const movements = `<div class="movement-toolbar"><div class="movement-add-buttons">${Object.entries(TYPES).map(([key, label]) => `<button type="button" class="button ghost small" data-add-movement="${key}">+ ${label}</button>`).join("")}</div><label class="movement-search"><span class="visually-hidden">Buscar movimiento</span><input type="search" id="movement-search" placeholder="Buscar…" value="${escapeHtml(state.search)}"></label><div class="movement-filters" role="group" aria-label="Filtrar movimientos">${[["todos", "Todos"], ...Object.entries(TYPES).map(([key, label]) => [key, label + "s"])].map(([key, label]) => `<button type="button" class="filter-button" data-filter="${key}" aria-pressed="${state.filter === key}">${label}</button>`).join("")}</div><div class="undo-row" ${state.undoMovement ? "" : "hidden"}><button type="button" class="button ghost small" id="undo-movement">Deshacer</button></div></div><div id="movement-list"></div>`;
   $("#controls").innerHTML = section("people", "01", "Nombres", "", people)
-    + section("rules", "02", "Reparto", "", rules)
     + section("period", "03", "Período y saldos", "", period)
     + section("movements", "04", "Registros", "", movements, true);
   if (preserve) document.querySelectorAll("details[data-section]").forEach((el) => { el.open = open.has(el.dataset.section); });
   renderMovementList();
+  renderSharingControls();
   renderAuxiliary();
   updateRuleHelp();
   updateNameLabels();
+}
+
+function renderSharingControls() {
+  const e = state.escenario;
+  $("#sharing-controls").innerHTML = selectField("escenario.regla", "Regla general", e.regla, Object.entries(RULES), true)
+    + `<div id="manual-field" ${e.regla === "manual" ? "" : "hidden"}>${field("escenario.porcentaje_el", "Parte de " + personName("el"), {value: e.porcentaje_el, suffix: "%", max: 100, step: "any", disabled: e.regla !== "manual"})}</div>`
+    + toggle("escenario.incluir_extra", "Incluir extras en el reparto", e.incluir_extra)
+    + `<span id="rule-help" hidden></span>`;
 }
 
 function movementSchedule(movement) {
@@ -296,7 +300,7 @@ function scheduleCalculation() {
 async function calculate() {
   const sequence = ++state.sequence;
   state.controller?.abort();
-  if (!$("#controls").checkValidity() || window.FinanzasOperativa?.checkValidity() === false) {
+  if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || window.FinanzasOperativa?.checkValidity() === false) {
     document.body.classList.remove("calculating");
     showError("Revisa los campos.");
     return;
@@ -331,6 +335,10 @@ function operativaContext() {
 }
 
 function renderAuxiliary() {
+  if (state.caso) {
+    const rows = state.result?.meses || [{mes: state.caso.inicio}];
+    $("#sharing-month").innerHTML = rows.map((row) => `<option value="${row.mes}" ${row.mes === state.selected ? "selected" : ""}>${monthLabel(row.mes)}</option>`).join("");
+  }
   window.FinanzasOperativa?.render(operativaContext());
   window.FinanzasEquivalencia?.render(operativaContext());
   renderAdjustments();
@@ -359,9 +367,9 @@ function adjustmentPercent(movement) {
 function renderAdjustments() {
   if (!state.caso) return;
   const focusId = document.activeElement?.dataset?.adjustIndex !== undefined ? document.activeElement.id : null;
-  const rows = state.result?.meses || [], row = state.result && selectedRow();
+  const row = state.result && selectedRow();
   const movements = state.caso.movimientos.map((movement, index) => ({movement, index})).filter(({movement}) => movement.tipo !== "ingreso" && (movement.persona === "compartido" || Number(movement.porcentaje_compartido) > 0));
-  $("#adjustments-content").innerHTML = `<div class="adjustment-summary adjustments-toolbar"><h2>Ajustes</h2><select id="adjustment-month" aria-label="Mes de los ajustes">${rows.map((month) => `<option value="${month.mes}" ${month.mes === state.selected ? "selected" : ""}>${monthLabel(month.mes)}</option>`).join("")}</select>${row ? ["el", "ella"].map((person) => `<span>${escapeHtml(personName(person))} <strong class="${row.flujo_libre_centimos_eur[person] < 0 ? "negative" : ""}">${eur(row.flujo_libre_centimos_eur[person])}</strong></span>`).join("") : ""}</div><div class="adjustment-list">${movements.map(({movement, index}) => {
+  $("#adjustments-content").innerHTML = `<div class="adjustment-summary adjustments-toolbar"><h2>Gastos compartidos</h2></div><div class="adjustment-list">${movements.map(({movement, index}) => {
     const shared = movement.persona === "compartido";
     const percent = shared ? adjustmentPercent(movement) : Number(movement.porcentaje_compartido), payment = row?.pagos.find((item) => item.id === movement.id);
     const left = shared ? `${personName("el")}${movement.reparto === "fijo" ? ` ${percent}%` : ""}` : `Personal ${Math.round((100 - percent) * 10000) / 10000}%`;
@@ -812,8 +820,8 @@ function bindEvents() {
   }
   window.FinanzasOperativa?.bind(operativaContext());
   window.FinanzasEquivalencia?.bind(operativaContext());
+  $("#sharing-month").addEventListener("change", (event) => selectMonth(event.target.value));
   $("#adjustments-content").addEventListener("input", handleAdjustment);
-  $("#adjustments-content").addEventListener("change", (event) => { if (event.target.id === "adjustment-month") selectMonth(event.target.value); });
   $("#adjustments-content").addEventListener("click", (event) => {
     const button = event.target.closest("[data-adjust-reset]");
     if (!button) return;
@@ -832,17 +840,19 @@ function bindEvents() {
     if (state.hiddenSeries.has(id)) state.hiddenSeries.delete(id); else state.hiddenSeries.add(id);
     renderChart();
   });
-  $("#controls").addEventListener("submit", (event) => event.preventDefault());
-  $("#controls").addEventListener("input", handleControl);
+  for (const selector of ["#controls", "#sharing-controls"]) {
+    $(selector).addEventListener("submit", (event) => event.preventDefault());
+    $(selector).addEventListener("input", handleControl);
+    $(selector).addEventListener("change", (event) => { if (["month", "date"].includes(event.target.type) || event.target.tagName === "SELECT") handleControl(event); });
+  }
   $("#controls").addEventListener("input", (event) => {
     if (event.target.id !== "movement-search") return;
     state.search = event.target.value;
     renderMovementList(true);
   });
-  $("#controls").addEventListener("change", (event) => { if (["month", "date"].includes(event.target.type) || event.target.tagName === "SELECT") handleControl(event); });
   $("#controls").addEventListener("click", handleArrayActions);
   $("#selected-month").addEventListener("change", (event) => selectMonth(event.target.value));
-  $("#monthly-table").addEventListener("click", (event) => { const row = event.target.closest("[data-month]"); if (row) selectMonth(row.dataset.month); });
+  $("#monthly-table").addEventListener("click", (event) => { const row = event.target.closest("[data-month]"); if (row) { selectMonth(row.dataset.month); setTab("sharing"); } });
   $("#chart").addEventListener("click", (event) => { const point = event.target.closest("[data-month]"); if (point) selectMonth(point.dataset.month); });
   $("#chart").addEventListener("keydown", (event) => { const point = event.target.closest("[data-month]"); if (point && ["Enter", " "].includes(event.key)) { event.preventDefault(); selectMonth(point.dataset.month); } });
   $("#chart").addEventListener("pointermove", (event) => {
