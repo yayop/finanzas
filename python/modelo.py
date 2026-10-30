@@ -185,6 +185,13 @@ def _preparar(caso, escenario):
         movimiento["etiquetas"] = [_texto(etiqueta, "etiqueta", 80).strip() for etiqueta in etiquetas]
         if movimiento.get("tipo") not in ("ingreso", "gasto", "deuda"):
             raise ValueError("tipo de {} debe ser ingreso, gasto o deuda".format(identificador))
+        # Los planes anteriores pueden seguir enviando «deuda». Las cuotas son
+        # una modalidad del gasto, no una clase distinta de salida de dinero.
+        if movimiento["tipo"] == "deuda":
+            movimiento["tipo"] = "gasto"
+        movimiento["descontar_antes_reparto"] = _booleano(
+            movimiento.get("descontar_antes_reparto", movimiento["tipo"] != "ingreso"),
+            "descontar_antes_reparto de " + identificador)
         conjunta = movimiento.get("persona") == "compartido"
         if conjunta:
             if movimiento["tipo"] == "ingreso":
@@ -316,14 +323,14 @@ def _cero():
     return {p: 0 for p in PERSONAS}
 
 
-def _asignacion(escenario, mes, comunes, considerados, personales):
+def _asignacion(escenario, mes, comunes, considerados, personales, descontados):
     regla = escenario["regla"]
     if regla == "mitades":
         aporte = Fraction(comunes, 2)
     elif regla == "manual":
         aporte = Fraction(comunes) * Fraction(_porcentaje(escenario["porcentaje_el"], "porcentaje_el")) / 100
     elif regla in ("proporcional", "proporcional_disponible"):
-        base = {p: considerados[p] - (personales[p] if regla == "proporcional_disponible" else 0) for p in PERSONAS}
+        base = {p: considerados[p] - (descontados[p] if regla == "proporcional_disponible" else 0) for p in PERSONAS}
         # Sin costes comunes no hace falta dividir; los ingresos pueden comenzar
         # después del primer mes del horizonte.
         if comunes == 0:
@@ -338,13 +345,15 @@ def _asignacion(escenario, mes, comunes, considerados, personales):
     return {"el": el, "ella": comunes - el}
 
 
-def _reparto_equivalente(escenario, reales, considerados, personales, comunes, asignacion):
+def _reparto_equivalente(escenario, reales, considerados, personales, descontados, comunes, asignacion):
     """Expresa el costo mensual ya acordado como una tasa sobre todo el gasto.
 
     Las tasas viajan como fracciones de texto: no se redondean porcentajes para
     volver a calcular dinero. El costo de partida incluye gastos asignados antes
-    del reparto global (también repartos fijos y comisiones de cambio). Los
-    excedentes son flujo mensual y no incluyen saldos previos ni revalorización.
+    del reparto global (también repartos fijos y comisiones de cambio). Solo los
+    descuentos elegidos reducen la base proporcional tras compromisos; los demás
+    gastos siguen reduciendo el excedente. Los excedentes son flujo mensual y no
+    incluyen saldos previos ni revalorización.
     """
     def fracciones(valores):
         if valores is None:
@@ -353,7 +362,7 @@ def _reparto_equivalente(escenario, reales, considerados, personales, comunes, a
                     "denominador": str(valores[p].denominator)} for p in PERSONAS}
 
     regla = escenario["regla"]
-    base = {p: considerados[p] - (personales[p] if regla == "proporcional_disponible" else 0)
+    base = {p: considerados[p] - (descontados[p] if regla == "proporcional_disponible" else 0)
             for p in PERSONAS}
     alpha = None
     if regla == "mitades":
@@ -389,6 +398,8 @@ def _reparto_equivalente(escenario, reales, considerados, personales, comunes, a
         costos_equivalentes = excedentes_equivalentes = diferencia = None
     return {"estado": estado,
             "gastos_previos_centimos_eur": dict(personales),
+            "gastos_descontados_centimos_eur": dict(descontados),
+            "gastos_no_descontados_centimos_eur": {p: personales[p] - descontados[p] for p in PERSONAS},
             "gastos_comunes_centimos_eur": comunes, "total_gastos_centimos_eur": total,
             "base_reparto_centimos_eur": base, "alpha": fracciones(alpha),
             "alpha_efectiva_comunes": fracciones(efectiva), "alpha_prima": fracciones(alpha_prima),
@@ -426,7 +437,7 @@ def simular_plan(caso, escenario):
     for indice_mes, (mes, sucesos) in enumerate(calendario.items()):
         tipo_cambio = _fx(caso, mes)
         reales, considerados = _cero(), _cero()
-        externos, personales = _cero(), _cero()
+        externos, personales, descontados = _cero(), _cero(), _cero()
         compras, costes_compras = _cero(), _cero()
         pagos, ingresos, comunes = [], [], 0
         cuotas_eur, cuotas_clp = 0, 0
@@ -472,10 +483,17 @@ def simular_plan(caso, escenario):
             else:
                 asignado[persona] = equivalente - compartido
             registro["importe_asignado_centimos_eur"] = asignado
+            # Las comisiones sintéticas mantienen el comportamiento anterior:
+            # se descuentan de la base de su titular, sin duplicar su costo.
+            descuento = movimiento.get("descontar_antes_reparto", True)
+            registro["descontar_antes_reparto"] = descuento
+            registro["importe_descontado_centimos_eur"] = dict(asignado) if descuento else _cero()
             pagos.append(registro)
             externos[pagador] += equivalente
             for titular in PERSONAS:
                 personales[titular] += asignado[titular]
+                if descuento:
+                    descontados[titular] += asignado[titular]
             comunes += compartido
             if movimiento["moneda"] == "CLP":
                 compras[pagador] += importe
@@ -484,7 +502,7 @@ def simular_plan(caso, escenario):
                 cuotas_eur += equivalente
                 if movimiento["moneda"] == "CLP":
                     cuotas_clp += importe
-        asignacion = _asignacion(escenario, mes, comunes, considerados, personales)
+        asignacion = _asignacion(escenario, mes, comunes, considerados, personales, descontados)
         compensacion = {p: externos[p] - personales[p] - asignacion[p] for p in PERSONAS}
         flujo = {p: reales[p] - externos[p] + compensacion[p] for p in PERSONAS}
         anteriores = dict(saldos)
@@ -493,6 +511,8 @@ def simular_plan(caso, escenario):
         saldos = {p: saldos[p] + flujo[p] + ajuste[p] for p in PERSONAS}
         fila = {"mes": mes, "clp_por_eur": str(tipo_cambio), "ingresos_reales_centimos_eur": reales,
                 "ingresos_considerados_centimos_eur": considerados, "pagos_personales_centimos_eur": personales,
+                "gastos_descontados_centimos_eur": descontados,
+                "gastos_no_descontados_centimos_eur": {p: personales[p] - descontados[p] for p in PERSONAS},
                 "gastos_comunes_centimos_eur": comunes, "asignacion_comunes_centimos_eur": asignacion,
                 "pagos_externos_centimos_eur": externos, "compensacion_neta_centimos_eur": compensacion,
                 "flujo_libre_centimos_eur": flujo, "saldo_inicial_centimos_eur": anteriores,
@@ -500,7 +520,7 @@ def simular_plan(caso, escenario):
                 "coste_compra_clp_centimos_eur": costes_compras,
                 "necesita_financiacion": {p: saldos[p] < 0 for p in PERSONAS}, "pagos": pagos, "ingresos": ingresos,
                 "cuotas_centimos_eur": cuotas_eur, "cuotas_clp": cuotas_clp,
-                "reparto_equivalente": _reparto_equivalente(escenario, reales, considerados, personales, comunes, asignacion)}
+                "reparto_equivalente": _reparto_equivalente(escenario, reales, considerados, personales, descontados, comunes, asignacion)}
         if operativa:
             fila["ajuste_cuentas_centimos_eur"] = ajuste
         for tipo in ("universidad", "ayuda", "deuda_fija"):
@@ -512,6 +532,7 @@ def simular_plan(caso, escenario):
         meses.append(fila)
     totales = {}
     for campo in ("ingresos_reales_centimos_eur", "ingresos_considerados_centimos_eur", "pagos_personales_centimos_eur",
+                  "gastos_descontados_centimos_eur", "gastos_no_descontados_centimos_eur",
                   "asignacion_comunes_centimos_eur", "pagos_externos_centimos_eur", "compensacion_neta_centimos_eur",
                   "flujo_libre_centimos_eur", "clp_comprados", "coste_compra_clp_centimos_eur"):
         totales[campo] = {p: sum(fila[campo][p] for fila in meses) for p in PERSONAS}

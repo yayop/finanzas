@@ -12,7 +12,7 @@ const clp = (pesos) => new Intl.NumberFormat("es-CL", {maximumFractionDigits: 0}
 const monthLabel = (month, short = false) => new Intl.DateTimeFormat("es-CL", {month: short ? "short" : "long", year: "numeric", timeZone: "UTC"}).format(new Date(month + "-01T12:00:00Z"));
 const RULES = {mitades: "50/50", proporcional: "Según ingresos", proporcional_disponible: "Tras compromisos", igualar: "Igualar margen", manual: "Porcentaje fijo"};
 const TABS = ["projection", "operations", "adjustments", "equivalence"];
-const TYPES = {ingreso: "Ingreso", gasto: "Gasto", deuda: "Deuda"};
+const TYPES = {ingreso: "Ingreso", gasto: "Gasto"};
 const DEFAULT_NAMES = {el: "Yayo", ella: "Fer"};
 const STORAGE_KEY = "finanzas-pareja-plan-v2";
 const LEGACY_STORAGE_KEY = "finanzas-pareja-plan-v1";
@@ -50,8 +50,8 @@ function selectField(path, label, value, options, wide = false) {
   return `<div class="field${wide ? " wide" : ""}"><label for="${id}">${escapeHtml(label)}</label><select id="${id}" data-path="${path}">${options.map(([key, text]) => `<option value="${escapeHtml(key)}" ${key === value ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}</select></div>`;
 }
 
-function toggle(path, label, checked, hint = "") {
-  return `<label class="toggle-row"><span>${escapeHtml(label)}${hint ? `<small class="hint">${escapeHtml(hint)}</small>` : ""}</span><input class="checkbox" type="checkbox" data-path="${path}" data-kind="boolean" ${checked ? "checked" : ""}></label>`;
+function toggle(path, label, checked, hint = "", disabled = false) {
+  return `<label class="toggle-row"><span>${escapeHtml(label)}${hint ? `<small class="hint">${escapeHtml(hint)}</small>` : ""}</span><input class="checkbox" type="checkbox" data-path="${path}" data-kind="boolean" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}></label>`;
 }
 
 function sharing(path, value) {
@@ -90,7 +90,8 @@ function normalize(data) {
     movement.importe_tipo ??= "total";
     movement.extra ??= false;
     movement.porcentaje_compartido ??= "0";
-    if (movement.tipo === "gasto" && Number(movement.porcentaje_compartido) === 100 && movement.persona !== "compartido") movement.persona = "compartido";
+    if (movement.tipo === "deuda") movement.tipo = "gasto";
+    if (movement.tipo === "gasto" && !Object.hasOwn(movement, "descontar_antes_reparto")) movement.descontar_antes_reparto = true;
     if (movement.persona === "compartido") {
       movement.reparto ??= "regla";
       movement.porcentaje_el ??= "50";
@@ -168,6 +169,11 @@ function movementResponsibility(movement) {
   return `${personName("el")} ${percentage}% / ${personName("ella")} ${Math.round((100 - percentage) * 10000) / 10000}%`;
 }
 
+function deductionSettings(movement) {
+  const disabled = movement.persona === "compartido" ? movement.reparto !== "fijo" : Number(movement.porcentaje_compartido) === 100;
+  return {disabled, hint: disabled ? "Ya se reparte como gasto común." : "Solo con Tras compromisos; sobre la parte asignada a cada persona."};
+}
+
 function movementCard(movement, i, open) {
   const path = `caso.movimientos.${i}`;
   const income = movement.tipo === "ingreso", shared = movement.persona === "compartido";
@@ -204,7 +210,9 @@ function movementCard(movement, i, open) {
     const partial = Number(movement.porcentaje_compartido) > 0;
     split = `<label class="toggle-row"><span>Compartir una parte</span><input class="checkbox" type="checkbox" data-share-toggle="${i}" ${partial ? "checked" : ""}></label>${partial ? sharing(`${path}.porcentaje_compartido`, movement.porcentaje_compartido) : ""}`;
   }
-  return `<details class="movement-card" data-movement-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="movement-summary"><span class="movement-summary-copy"><strong data-summary-concept>${escapeHtml(movement.concepto || "Sin concepto")}</strong><small data-summary-schedule>${escapeHtml(movementResponsibility(movement))} · ${escapeHtml(movementSchedule(movement))}</small></span><span class="movement-amount" data-summary-amount>${escapeHtml(originalMoney(movement.importe, movement.moneda))}</span><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="movement-editor"><div class="movement-actions"><button type="button" class="button ghost small" data-duplicate-movement="${i}">Duplicar</button><button type="button" class="button ghost small" data-remove-movement="${i}">Eliminar</button></div><div class="field-grid">${fields}</div>${!income ? toggle(`${path}.marcar_grafico`, "Marcar en gráfico", movement.marcar_grafico) : ""}${split}</div></details>`;
+  const {disabled, hint} = deductionSettings(movement);
+  const deduction = !income ? toggle(`${path}.descontar_antes_reparto`, "Descontar antes de repartir", movement.descontar_antes_reparto, hint, disabled) : "";
+  return `<details class="movement-card" data-movement-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="movement-summary"><span class="movement-summary-copy"><strong data-summary-concept>${escapeHtml(movement.concepto || "Sin concepto")}</strong><small data-summary-schedule>${escapeHtml(movementResponsibility(movement))} · ${escapeHtml(movementSchedule(movement))}</small></span><span class="movement-amount" data-summary-amount>${escapeHtml(originalMoney(movement.importe, movement.moneda))}</span><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="movement-editor"><div class="movement-actions"><button type="button" class="button ghost small" data-duplicate-movement="${i}">Duplicar</button><button type="button" class="button ghost small" data-remove-movement="${i}">Eliminar</button></div><div class="field-grid">${fields}</div>${!income ? toggle(`${path}.marcar_grafico`, "Marcar en gráfico", movement.marcar_grafico) : ""}${split}${deduction}</div></details>`;
 }
 
 function renderMovementList(preserve = false) {
@@ -587,6 +595,7 @@ function handleControl(event) {
       }
     }
     if (movement.tipo === "ingreso") {
+      delete movement.descontar_antes_reparto;
       if (movement.persona === "compartido") movement.persona = "el";
       movement.pagador = movement.persona;
       movement.porcentaje_compartido = "0";
@@ -602,6 +611,7 @@ function handleControl(event) {
         movement.reparto = "regla";
       }
     }
+    if (movement.tipo === "gasto") movement.descontar_antes_reparto ??= false;
     const account = state.caso.cuentas.find((item) => item.id === movement.cuenta_id);
     if (account && (account.moneda !== movement.moneda || (account.titular !== "compartido" && account.titular !== (movement.tipo === "ingreso" ? movement.persona : movement.pagador)))) movement.cuenta_id = "";
     if (["tipo", "modalidad", "importe_tipo", "moneda", "persona", "pagador", "cuenta_id", "reparto"].includes(match[2])) renderMovementList(true);
@@ -615,6 +625,14 @@ function handleControl(event) {
         if (paid) paid.max = movement.cuotas;
         const split = card.querySelector("[data-split-result]");
         if (split) split.textContent = `${personName("ella")} ${movement.porcentaje_el !== "" ? Math.round((100 - Number(movement.porcentaje_el)) * 10000) / 10000 : "—"}%`;
+        if (match[2] === "porcentaje_compartido") {
+          const deduction = card.querySelector(`[data-path="caso.movimientos.${i}.descontar_antes_reparto"]`);
+          if (deduction) {
+            const settings = deductionSettings(movement);
+            deduction.disabled = settings.disabled;
+            deduction.closest(".toggle-row").querySelector(".hint").textContent = settings.hint;
+          }
+        }
       }
     }
   }
@@ -633,7 +651,9 @@ function handleArrayActions(event) {
   let focusIndex = null;
   if (add) {
     const type = add.dataset.addMovement;
-    const movement = {id: uniqueId(), concepto: type === "ingreso" ? "Nuevo ingreso" : type === "deuda" ? "Nueva deuda" : "Nuevo gasto", tipo: type, persona: type === "gasto" ? "compartido" : "el", pagador: "el", importe: "0.00", moneda: "EUR", fecha: state.caso.inicio + "-01", modalidad: type === "deuda" ? "cuotas" : "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: type === "gasto" ? "100" : "0", reparto: "regla", porcentaje_el: "50", cuenta_id: "", grupo: "", etiquetas: [], marcar_grafico: false};
+    if (!Object.hasOwn(TYPES, type)) return;
+    const movement = {id: uniqueId(), concepto: type === "ingreso" ? "Nuevo ingreso" : "Nuevo gasto", tipo: type, persona: type === "gasto" ? "compartido" : "el", pagador: "el", importe: "0.00", moneda: "EUR", fecha: state.caso.inicio + "-01", modalidad: "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: type === "gasto" ? "100" : "0", reparto: "regla", porcentaje_el: "50", cuenta_id: "", grupo: "", etiquetas: [], marcar_grafico: false};
+    if (type === "gasto") movement.descontar_antes_reparto = false;
     state.caso.movimientos.push(movement);
     state.activeMovement = movement.id;
     state.filter = type;
