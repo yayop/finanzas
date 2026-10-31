@@ -26,16 +26,25 @@
       </header>
       <div class="error-banner" id="error" role="alert" hidden></div>
       <nav class="workspace-tabs" role="tablist" aria-label="Vistas del plan">
-        <button type="button" id="tab-projection" role="tab" data-tab="projection" aria-controls="panel-projection" aria-selected="true">Proyección</button>
+        <button type="button" id="tab-records" role="tab" data-tab="records" aria-controls="panel-records" aria-selected="true">Registros</button>
         <button type="button" id="tab-sharing" role="tab" data-tab="sharing" aria-controls="panel-sharing" aria-selected="false" tabindex="-1">Reparto</button>
+        <button type="button" id="tab-projection" role="tab" data-tab="projection" aria-controls="panel-projection" aria-selected="false" tabindex="-1">Proyección</button>
         <button type="button" id="tab-operations" role="tab" data-tab="operations" aria-controls="panel-operations" aria-selected="false" tabindex="-1">Operativa</button>
       </nav>
-      <section id="panel-projection" class="tab-panel" role="tabpanel" aria-labelledby="tab-projection">
-       <div class="workspace-grid">
+      <section id="panel-records" class="tab-panel records-layout" role="tabpanel" aria-labelledby="tab-records">
         <aside class="controls-panel" aria-labelledby="controls-title">
-          <div class="panel-heading"><h2 id="controls-title">Datos</h2><span id="status" role="status" aria-live="polite">Cargando…</span></div>
+          <div class="panel-heading"><h2 id="controls-title">Ingresos y gastos</h2><span id="status" role="status" aria-live="polite">Cargando…</span></div>
           <form id="controls" autocomplete="off"><div class="loading controls-loading" aria-label="Cargando"><span></span><span></span><span></span></div></form>
         </aside>
+      </section>
+      <section id="panel-sharing" class="tab-panel sharing-layout" role="tabpanel" aria-labelledby="tab-sharing" hidden>
+        <div class="sharing-toolbar"><h2>Reparto</h2><label class="month-select-label" for="sharing-month"><span>Mes</span><select id="sharing-month" class="select-control" aria-label="Mes del reparto"><option>Cargando…</option></select></label></div>
+        <form id="sharing-controls" class="card sharing-controls" autocomplete="off"></form>
+        <div id="adjustments-content"></div>
+        <div id="equivalence-content"></div>
+        <section class="card" id="agreement" aria-labelledby="agreement-title"><div class="card-heading"><h2 id="agreement-title">Detalle del mes</h2></div><div id="month-detail"></div></section>
+      </section>
+      <section id="panel-projection" class="tab-panel projection-layout" role="tabpanel" aria-labelledby="tab-projection" hidden>
         <div class="results-column">
           <div class="results-heading"><h2>Resumen</h2><label class="month-select-label" for="selected-month"><span class="visually-hidden">Mes</span><select id="selected-month" class="select-control" aria-label="Mes"><option>Cargando…</option></select></label></div>
           <div id="kpis" class="kpis" aria-live="polite"><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div></div>
@@ -55,14 +64,6 @@
           <section class="card monthly-card" id="monthly" aria-labelledby="monthly-title"><div class="card-heading"><h2 id="monthly-title">Meses</h2><span class="muted">EUR</span></div><div class="table-wrap"><table id="monthly-table"><caption class="visually-hidden">Proyección mensual</caption><tbody><tr><td class="empty-state">Cargando…</td></tr></tbody></table></div></section>
           <section class="card" id="future" aria-labelledby="future-title"><div class="card-heading"><h2 id="future-title">Pagos fuera del período</h2></div><div id="commitments"></div></section>
         </div>
-       </div>
-      </section>
-      <section id="panel-sharing" class="tab-panel sharing-layout" role="tabpanel" aria-labelledby="tab-sharing" hidden>
-        <div class="sharing-toolbar"><h2>Reparto</h2><label class="month-select-label" for="sharing-month"><span>Mes</span><select id="sharing-month" class="select-control" aria-label="Mes del reparto"><option>Cargando…</option></select></label></div>
-        <form id="sharing-controls" class="card sharing-controls" autocomplete="off"></form>
-        <div id="equivalence-content"></div>
-        <div id="adjustments-content"></div>
-        <section class="card" id="agreement" aria-labelledby="agreement-title"><div class="card-heading"><h2 id="agreement-title">Detalle del mes</h2></div><div id="month-detail"></div></section>
       </section>
       <section id="panel-operations" class="tab-panel" role="tabpanel" aria-labelledby="tab-operations" hidden>
         <div id="operations-content" class="operations-layout"></div>

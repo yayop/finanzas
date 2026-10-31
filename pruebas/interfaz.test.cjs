@@ -57,7 +57,7 @@ function createApp(saved = {}) {
     return value;
   }
   document = {querySelector: node, querySelectorAll: (selector) => {
-    if (selector === "[data-tab]") return ["projection", "sharing", "operations"].map((name) => {
+    if (selector === "[data-tab]") return ["records", "sharing", "projection", "operations"].map((name) => {
       const tab = node("#tab-" + name); tab.dataset.tab = name; return tab;
     });
     return [];
@@ -90,7 +90,13 @@ async function loadExample(app) {
 
 function edit(app, index, property, value, options = {}) {
   const input = {dataset: {path: `caso.movimientos.${index}.${property}`, kind: options.kind || (typeof value === "boolean" ? "boolean" : typeof value === "number" ? "integer" : "string")}, value: String(value), checked: value, type: options.type || "text", tagName: options.tagName || "INPUT", closest: (selector) => selector === "[data-path]" ? input : null};
-  app.handleControl({target: input});
+  const movement = app.state.caso.movimientos[index];
+  const inSharing = movement.tipo !== "ingreso" && ["persona", "reparto", "porcentaje_el", "porcentaje_compartido", "descontar_antes_reparto"].includes(property);
+  if (inSharing) {
+    const event = {target: input};
+    const name = input.tagName === "SELECT" ? "change" : "input";
+    for (const callback of app.nodes.get("#adjustments-content").listeners.get(name) || []) callback(event);
+  } else app.handleControl({target: input});
 }
 
 function editName(app, person, value) {
@@ -144,6 +150,9 @@ test("cada apertura inicia vacía, con saldos en cero y sin movimientos", async 
   assert.equal(app.state.caso.inicio, current);
   assert.equal(app.state.result.meses.length, 12);
   assert.equal(app.storage.has("finanzas-pareja-plan-v2"), false);
+  assert.equal(app.state.tab, "records");
+  assert.equal(app.nodes.get("#panel-records").hidden, false);
+  assert.equal(app.nodes.get("#panel-projection").hidden, true);
   assert.match(app.nodes.get("#equivalence-content").innerHTML, /Sin gastos: α′ no está definida/);
 });
 
@@ -211,6 +220,7 @@ test("Nuevo vacía el plan y la referencia sin borrar el último plan recuperabl
   assert.equal(app.state.filter, "todos");
   assert.equal(app.state.search, "");
   assert.equal(app.state.undoMovement, null);
+  assert.equal(app.state.tab, "records");
   assert.equal(app.storage.get("finanzas-pareja-plan-v2"), saved);
   assert.ok(app.state.result.meses.every((month) => month.hogar.saldo_final_centimos_eur === 0));
 });
@@ -235,9 +245,9 @@ test("un gasto nuevo admite cuotas y descuento opcional sin categoría separada 
   action(app, "[data-add-movement]", {addMovement: "gasto"});
   const index = app.state.caso.movimientos.length - 1;
   assert.equal(app.state.caso.movimientos[index].descontar_antes_reparto, false);
-  assert.match(app.nodes.get("#movement-list").innerHTML, /Ya se reparte como gasto común/);
-  const disabledDiscount = new RegExp(`data-path="caso\\.movimientos\\.${index}\\.descontar_antes_reparto" data-kind="boolean"[^>]*disabled`);
-  assert.match(app.nodes.get("#movement-list").innerHTML, disabledDiscount);
+  assert.equal(app.state.caso.movimientos[index].persona, "el");
+  assert.equal(app.state.caso.movimientos[index].porcentaje_compartido, "0");
+  assert.doesNotMatch(app.nodes.get("#movement-list").innerHTML, /Descontar antes de repartir|data-share-toggle|Responsabilidad/);
   for (const [property, value] of Object.entries({concepto: "Compra en cuotas", persona: "ella", pagador: "ella", importe: "300.01", modalidad: "cuotas", cuotas: 3, cuotas_pagadas: 1, fecha: "2026-11-01"})) edit(app, index, property, value);
   await app.calculate();
   assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
@@ -246,11 +256,12 @@ test("un gasto nuevo admite cuotas y descuento opcional sin categoría separada 
   assert.equal(row(app, "2026-12").cuotas_centimos_eur, 10001);
   assert.equal(row(app, "2027-01").cuotas_centimos_eur, 0);
   const html = app.nodes.get("#movement-list").innerHTML;
-  assert.match(html, /Descontar antes de repartir/);
-  assert.match(html, new RegExp(`data-path="caso\\.movimientos\\.${index}\\.descontar_antes_reparto" data-kind="boolean"`));
+  assert.doesNotMatch(html, /Descontar antes de repartir|data-share-toggle|Responsabilidad/);
+  const sharingHTML = app.nodes.get("#adjustments-content").innerHTML;
+  assert.match(sharingHTML, /Descontar antes de repartir/);
+  assert.match(sharingHTML, new RegExp(`data-path="caso\\.movimientos\\.${index}\\.descontar_antes_reparto" data-kind="boolean"`));
   assert.match(html, /Cuotas totales/);
   assert.doesNotMatch(html, /<option value="deuda"/);
-  assert.doesNotMatch(html, disabledDiscount);
   const restored = createApp(Object.fromEntries(app.storage));
   await restored.initialize();
   await restored.restoreSavedPlan();
@@ -293,13 +304,13 @@ test("descontar un gasto cambia el reparto neto, conserva pagos y se guarda al r
 test("el slider activa y desactiva el descuento al pasar por 100 % sin reemplazar su tarjeta", async () => {
   const app = createApp();
   await loadPlan(app, plan([...incomes(), movement("parcial", {persona: "ella", porcentaje_compartido: "100", descontar_antes_reparto: true})]));
-  const hint = {textContent: "Ya se reparte como gasto común."};
+  const hint = {textContent: "Ya se reparte como gasto socializado."};
   const deduction = {disabled: true, checked: true, closest: (selector) => selector === ".toggle-row" ? {querySelector: () => hint} : null};
   const summary = Object.fromEntries(["concept", "schedule", "amount"].map((key) => [`[data-summary-${key}]`, {textContent: ""}]));
   const card = {querySelector: (selector) => selector === '[data-path="caso.movimientos.2.descontar_antes_reparto"]' ? deduction : summary[selector] || null};
   const output = {textContent: "100 %"};
-  const range = {dataset: {path: "caso.movimientos.2.porcentaje_compartido", kind: "string"}, type: "range", value: "50", closest: (selector) => selector === "[data-path]" ? range : selector === ".movement-card" ? card : selector === ".sharing-control" ? {querySelector: () => output} : null};
-  const list = app.nodes.get("#movement-list");
+  const range = {dataset: {path: "caso.movimientos.2.porcentaje_compartido", kind: "string"}, type: "range", value: "50", closest: (selector) => selector === "[data-path]" ? range : selector === ".adjustment-card" ? card : selector === ".sharing-control" ? {querySelector: () => output} : null};
+  const list = app.nodes.get("#adjustments-content");
   const originalHTML = list.innerHTML;
   let replacements = 0;
   Object.defineProperty(list, "innerHTML", {get: () => originalHTML, set: () => { replacements++; }});
@@ -311,7 +322,7 @@ test("el slider activa y desactiva el descuento al pasar por 100 % sin reemplaza
   range.value = "100";
   app.handleControl({target: range});
   assert.equal(deduction.disabled, true);
-  assert.equal(hint.textContent, "Ya se reparte como gasto común.");
+  assert.match(hint.textContent, /Ya se reparte como gasto socializado/);
   assert.equal(app.state.caso.movimientos[2].porcentaje_compartido, "100");
   assert.equal(output.textContent, "100 %");
   assert.equal(deduction.checked, true);
@@ -510,30 +521,39 @@ test("un gasto común guardado deja de tener titular exclusivo sin alterar sus c
   assert.deepEqual(copy(newResult.totales.saldo_final_centimos_eur), copy(oldResult.totales.saldo_final_centimos_eur));
 });
 
-test("los gastos nuevos admiten responsabilidad compartida y un porcentaje fijo por persona", async () => {
+test("un gasto se declara personal y puede socializarse desde Reparto sin alterar su pago", async () => {
   const app = createApp();
   await loadExample(app);
+  app.state.caso.cuentas.push({id: "cuenta-yayo", nombre: "Banco Yayo", titular: "el", moneda: "EUR", saldo_inicial: "0.00", porcentaje_el: "50"});
   action(app, "[data-add-movement]", {addMovement: "gasto"});
   const index = app.state.caso.movimientos.length - 1;
   const movement = app.state.caso.movimientos[index];
-  assert.equal(movement.persona, "compartido");
+  assert.equal(movement.persona, "el");
+  assert.equal(movement.porcentaje_compartido, "0");
   assert.equal(movement.pagador, "el");
   assert.equal(movement.reparto, "regla");
   assert.equal(movement.porcentaje_el, "50");
-  const html = app.nodes.get("#movement-list").innerHTML;
-  for (const [key, label] of [["el", "Yayo"], ["ella", "Fer"], ["compartido", "Compartido"]]) {
+  const declaration = app.nodes.get("#movement-list").innerHTML;
+  assert.doesNotMatch(declaration, new RegExp(`data-path="caso\\.movimientos\\.${index}\\.(?:persona|reparto|porcentaje_el|porcentaje_compartido|descontar_antes_reparto)"`));
+  const html = app.nodes.get("#adjustments-content").innerHTML;
+  assert.match(html, /id="socialization-controls"/);
+  for (const [key, label] of [["el", "Yayo"], ["ella", "Fer"], ["compartido", "Socializado"]]) {
     assert.match(html, new RegExp(`value="${key}"[^>]*>${label}</option>`));
   }
-  for (const [property, value] of Object.entries({concepto: "Internet compartido", importe: "100.00", fecha: "2026-11-01", modalidad: "unico", reparto: "fijo", porcentaje_el: "25"})) edit(app, index, property, value);
+  for (const [property, value] of Object.entries({concepto: "Internet socializado", importe: "100.00", fecha: "2026-11-01", modalidad: "unico", cuenta_id: "cuenta-yayo"})) edit(app, index, property, value);
+  const paymentBefore = Object.fromEntries(["importe", "moneda", "fecha", "modalidad", "pagador", "cuenta_id"].map((key) => [key, movement[key]]));
+  for (const [property, value] of Object.entries({persona: "compartido", reparto: "fijo", porcentaje_el: "25"})) edit(app, index, property, value);
   await app.calculate();
   assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
   const november = row(app);
   assert.equal(november.flujo_libre_centimos_eur.el, 162500);
   assert.equal(november.flujo_libre_centimos_eur.ella, 56500);
   assert.equal(november.hogar.flujo_libre_centimos_eur, 219000);
-  const payment = november.pagos.find((item) => item.concepto === "Internet compartido");
+  const payment = november.pagos.find((item) => item.concepto === "Internet socializado");
   assert.equal(payment.persona, "compartido");
   assert.equal(payment.pagador, "el");
+  assert.deepEqual(copy(Object.fromEntries(Object.keys(paymentBefore).map((key) => [key, movement[key]]))), paymentBefore);
+  assert.equal(payment.cuenta_id, "cuenta-yayo");
   assert.deepEqual(copy(payment.importe_asignado_centimos_eur), {el: 2500, ella: 7500});
   assert.equal(row(app, "2026-12").flujo_libre_centimos_eur.el, 165000);
   assert.equal(row(app, "2026-12").flujo_libre_centimos_eur.ella, 64000);
@@ -552,7 +572,7 @@ test("cambiar un gasto compartido a personal elimina su reparto anterior", async
   await loadExample(app);
   action(app, "[data-add-movement]", {addMovement: "gasto"});
   const index = app.state.caso.movimientos.length - 1;
-  for (const [property, value] of Object.entries({importe: "100.00", modalidad: "unico", reparto: "fijo", porcentaje_el: "25"})) edit(app, index, property, value);
+  for (const [property, value] of Object.entries({importe: "100.00", modalidad: "unico", persona: "compartido", reparto: "fijo", porcentaje_el: "25"})) edit(app, index, property, value);
   edit(app, index, "persona", "el");
   await app.calculate();
   const movement = app.state.caso.movimientos[index];
@@ -718,22 +738,23 @@ test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la refere
   await loadExample(app);
   const planBefore = copy({caso: app.state.caso, escenario: app.state.escenario, reference: app.state.reference});
   const resultBefore = copy(app.state.result);
-  for (const tab of ["sharing", "operations", "projection"]) {
+  for (const tab of ["sharing", "projection", "operations", "records"]) {
     app.setTab(tab);
     assert.equal(app.nodes.get("#tab-" + tab)["aria-selected"], "true");
-    for (const panel of ["projection", "sharing", "operations"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
+    for (const panel of ["records", "sharing", "projection", "operations"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
   }
   const navigate = (tab, key) => {
     for (const callback of app.nodes.get("#tab-" + tab).listeners.get("keydown")) callback({key, preventDefault() {}});
     return app.state.tab;
   };
-  assert.equal(navigate("projection", "ArrowRight"), "sharing");
-  assert.equal(navigate("sharing", "ArrowRight"), "operations");
-  assert.equal(navigate("operations", "ArrowRight"), "projection");
-  assert.equal(navigate("projection", "ArrowLeft"), "operations");
-  assert.equal(navigate("operations", "Home"), "projection");
-  assert.equal(navigate("projection", "End"), "operations");
-  assert.equal(navigate("operations", "Home"), "projection");
+  assert.equal(navigate("records", "ArrowRight"), "sharing");
+  assert.equal(navigate("sharing", "ArrowRight"), "projection");
+  assert.equal(navigate("projection", "ArrowRight"), "operations");
+  assert.equal(navigate("operations", "ArrowRight"), "records");
+  assert.equal(navigate("records", "ArrowLeft"), "operations");
+  assert.equal(navigate("operations", "Home"), "records");
+  assert.equal(navigate("records", "End"), "operations");
+  assert.equal(navigate("operations", "Home"), "records");
   const monthButton = {dataset: {month: "2026-12"}};
   for (const callback of app.nodes.get("#monthly-table").listeners.get("click")) {
     callback({target: {closest: (selector) => selector === "[data-month]" ? monthButton : null}});
