@@ -11,22 +11,22 @@ const eur = (cents, decimals = null) => {
 const clp = (pesos) => new Intl.NumberFormat("es-CL", {maximumFractionDigits: 0}).format(pesos) + " CLP";
 const monthLabel = (month, short = false) => new Intl.DateTimeFormat("es-CL", {month: short ? "short" : "long", year: "numeric", timeZone: "UTC"}).format(new Date(month + "-01T12:00:00Z"));
 const RULES = {mitades: "50/50", proporcional: "Según ingresos", proporcional_disponible: "Tras compromisos", igualar: "Igualar margen", manual: "Porcentaje fijo"};
-const TABS = ["projection", "sharing", "operations"];
+const TABS = ["records", "sharing", "projection", "operations"];
 const TYPES = {ingreso: "Ingreso", gasto: "Gasto"};
 const DEFAULT_NAMES = {el: "Yayo", ella: "Fer"};
 const STORAGE_KEY = "finanzas-pareja-plan-v2";
 const LEGACY_STORAGE_KEY = "finanzas-pareja-plan-v1";
-const state = {caso: null, escenario: null, initial: null, result: null, reference: null, selected: null, metric: "flujo", chartView: "personas", hiddenSeries: new Set(), tab: "projection", edited: false, saveEnabled: false, sequence: 0, importSequence: 0, controller: null, timer: null, filter: "todos", search: "", activeMovement: null, undoMovement: null};
+const state = {caso: null, escenario: null, initial: null, result: null, reference: null, selected: null, metric: "flujo", chartView: "personas", hiddenSeries: new Set(), tab: "records", edited: false, saveEnabled: false, sequence: 0, importSequence: 0, controller: null, timer: null, filter: "todos", search: "", activeMovement: null, undoMovement: null};
 const dateLabel = (date) => date && !Number.isNaN(new Date(date + "T12:00:00Z").getTime()) ? new Intl.DateTimeFormat("es-CL", {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"}).format(new Date(date + "T12:00:00Z")) : "fecha por definir";
 const originalMoney = (amount, currency) => currency === "CLP" ? clp(Number(amount)) : eur(Math.round(Number(amount) * 100));
 
 function personName(person, caso = state.caso) {
-  if (person === "compartido") return "Compartido";
+  if (person === "compartido") return "Socializado";
   return caso?.personas?.[person]?.nombre?.trim() || DEFAULT_NAMES[person];
 }
 
 function peopleOptions(includeShared = false) {
-  return [...["el", "ella"].map((person) => [person, personName(person)]), ...(includeShared ? [["compartido", "Compartido"]] : [])];
+  return [...["el", "ella"].map((person) => [person, personName(person)]), ...(includeShared ? [["compartido", "Socializado"]] : [])];
 }
 
 function updateNameLabels() {
@@ -54,9 +54,9 @@ function toggle(path, label, checked, hint = "", disabled = false) {
   return `<label class="toggle-row"><span>${escapeHtml(label)}${hint ? `<small class="hint">${escapeHtml(hint)}</small>` : ""}</span><input class="checkbox" type="checkbox" data-path="${path}" data-kind="boolean" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}></label>`;
 }
 
-function sharing(path, value) {
+function sharing(path, value, index = null) {
   const id = "f-" + path.replaceAll(".", "-");
-  return `<div class="sharing-control"><div class="range-row"><label for="${id}">Parte con regla general</label><output class="range-value" for="${id}">${escapeHtml(value)} %</output></div><input id="${id}" aria-label="Parte compartida" type="range" min="0" max="100" step="any" value="${escapeHtml(value)}" data-path="${path}" data-kind="string"></div>`;
+  return `<div class="sharing-control"><div class="range-row"><label for="${id}">Parte con regla general</label><output class="range-value" for="${id}">${escapeHtml(value)} %</output></div><input id="${id}" aria-label="Parte socializada" type="range" min="0" max="100" step="any" value="${escapeHtml(value)}" data-path="${path}" data-kind="string" ${index === null ? "" : `data-adjust-index="${index}"`}></div>`;
 }
 
 function section(id, number, title, meta, body, open = false) {
@@ -175,12 +175,12 @@ function movementResponsibility(movement) {
 
 function deductionSettings(movement) {
   const disabled = movement.persona === "compartido" ? movement.reparto !== "fijo" : Number(movement.porcentaje_compartido) === 100;
-  return {disabled, hint: disabled ? "Ya se reparte como gasto común." : "Solo con Tras compromisos; sobre la parte asignada a cada persona."};
+  return {disabled, hint: disabled ? "Ya se reparte como gasto socializado." : "Solo con Tras compromisos; sobre la parte asignada a cada persona."};
 }
 
 function movementCard(movement, i, open) {
   const path = `caso.movimientos.${i}`;
-  const income = movement.tipo === "ingreso", shared = movement.persona === "compartido";
+  const income = movement.tipo === "ingreso";
   const installments = movement.modalidad === "cuotas", recurring = movement.modalidad === "recurrente";
   const amountLabel = installments ? movement.importe_tipo === "cuota" ? "Cada cuota" : "Total original" : "Importe";
   const dateTitle = installments ? "Próxima cuota" : recurring ? "Desde" : "Fecha";
@@ -188,7 +188,7 @@ function movementCard(movement, i, open) {
   const fields = [
     field(`${path}.concepto`, "Concepto", {type: "text", value: movement.concepto, wide: true}),
     selectField(`${path}.tipo`, "Tipo", movement.tipo, Object.entries(TYPES)),
-    selectField(`${path}.persona`, income ? "Recibe" : "Responsabilidad", movement.persona, peopleOptions(!income)),
+    income ? selectField(`${path}.persona`, "Recibe", movement.persona, peopleOptions()) : "",
     field(`${path}.importe`, amountLabel, {value: movement.importe, suffix: movement.moneda === "CLP" ? "CLP" : "€", step: movement.moneda === "CLP" ? "1" : "0.01"}),
     selectField(`${path}.moneda`, "Moneda", movement.moneda, [["EUR", "EUR"], ["CLP", "CLP"]]),
     !income ? selectField(`${path}.pagador`, "Pagado por", movement.pagador, peopleOptions(), true) : "",
@@ -201,22 +201,9 @@ function movementCard(movement, i, open) {
     installments ? field(`${path}.cuotas`, "Cuotas totales", {value: movement.cuotas, min: 1, max: 600, step: "1", kind: "integer"}) + field(`${path}.cuotas_pagadas`, "Pagadas", {value: movement.cuotas_pagadas, min: 0, max: movement.cuotas, step: "1", kind: "integer"}) : "",
     !income ? field(`${path}.grupo`, "Grupo", {type: "text", value: movement.grupo || "", maxLength: 80, required: false, wide: true, list: "expense-groups"}) + field(`${path}.etiquetas`, "Etiquetas (separadas por coma)", {type: "text", kind: "csv", value: (movement.etiquetas || []).join(", "), required: false, wide: true}) : ""
   ].join("");
-  let split = "";
-  if (income) split = toggle(`${path}.extra`, "Ingreso extra", movement.extra);
-  else if (shared) {
-    split = `<div class="joint-split">${selectField(`${path}.reparto`, "Reparto", movement.reparto || "regla", [["regla", "Regla general"], ["fijo", "Porcentaje fijo"]], true)}`;
-    if (movement.reparto === "fijo") {
-      const remainder = movement.porcentaje_el !== "" && Number.isFinite(Number(movement.porcentaje_el)) ? Math.round((100 - Number(movement.porcentaje_el)) * 10000) / 10000 : "—";
-      split += `${field(`${path}.porcentaje_el`, personName("el"), {value: movement.porcentaje_el ?? "50", suffix: "%", min: 0, max: 100, step: "any"})}<p class="split-result" data-split-result>${escapeHtml(personName("ella"))} ${remainder}%</p>`;
-    }
-    split += "</div>";
-  } else {
-    const partial = Number(movement.porcentaje_compartido) > 0;
-    split = `<label class="toggle-row"><span>Compartir una parte</span><input class="checkbox" type="checkbox" data-share-toggle="${i}" ${partial ? "checked" : ""}></label>${partial ? sharing(`${path}.porcentaje_compartido`, movement.porcentaje_compartido) : ""}`;
-  }
-  const {disabled, hint} = deductionSettings(movement);
-  const deduction = !income ? toggle(`${path}.descontar_antes_reparto`, "Descontar antes de repartir", movement.descontar_antes_reparto, hint, disabled) : "";
-  return `<details class="movement-card" data-movement-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="movement-summary"><span class="movement-summary-copy"><strong data-summary-concept>${escapeHtml(movement.concepto || "Sin concepto")}</strong><small data-summary-schedule>${escapeHtml(movementResponsibility(movement))} · ${escapeHtml(movementSchedule(movement))}</small></span><span class="movement-amount" data-summary-amount>${escapeHtml(originalMoney(movement.importe, movement.moneda))}</span><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="movement-editor"><div class="movement-actions"><button type="button" class="button ghost small" data-duplicate-movement="${i}">Duplicar</button><button type="button" class="button ghost small" data-remove-movement="${i}">Eliminar</button></div><div class="field-grid">${fields}</div>${!income ? toggle(`${path}.marcar_grafico`, "Marcar en gráfico", movement.marcar_grafico) : ""}${split}${deduction}</div></details>`;
+  const extra = income ? toggle(`${path}.extra`, "Ingreso extra", movement.extra) : "";
+  const owner = income ? personName(movement.persona) : `Pagado por ${personName(movement.pagador)}`;
+  return `<details class="movement-card" data-movement-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="movement-summary"><span class="movement-summary-copy"><strong data-summary-concept>${escapeHtml(movement.concepto || "Sin concepto")}</strong><small data-summary-schedule>${escapeHtml(owner)} · ${escapeHtml(movementSchedule(movement))}</small></span><span class="movement-amount" data-summary-amount>${escapeHtml(originalMoney(movement.importe, movement.moneda))}</span><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="movement-editor"><div class="movement-actions"><button type="button" class="button ghost small" data-duplicate-movement="${i}">Duplicar</button><button type="button" class="button ghost small" data-remove-movement="${i}">Eliminar</button></div><div class="field-grid">${fields}</div>${!income ? toggle(`${path}.marcar_grafico`, "Marcar en gráfico", movement.marcar_grafico) : ""}${extra}</div></details>`;
 }
 
 function renderMovementList(preserve = false) {
@@ -300,7 +287,7 @@ function scheduleCalculation() {
 async function calculate() {
   const sequence = ++state.sequence;
   state.controller?.abort();
-  if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || window.FinanzasOperativa?.checkValidity() === false) {
+  if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || $("#socialization-controls")?.checkValidity() === false || window.FinanzasOperativa?.checkValidity() === false) {
     document.body.classList.remove("calculating");
     showError("Revisa los campos.");
     return;
@@ -364,41 +351,89 @@ function adjustmentPercent(movement) {
   return Math.min(100, Math.max(0, Math.round(ratio * 10) / 10));
 }
 
+function socializationState(movement) {
+  if (movement.persona === "compartido") return movement.reparto === "fijo" ? `Socializado · ${movementResponsibility(movement)}` : "Socializado · Regla general";
+  const percent = Number(movement.porcentaje_compartido);
+  return personName(movement.persona) + (percent ? ` · Socializado ${percent}%` : "");
+}
+
+function socializationCard(movement, index, row, open) {
+  const path = `caso.movimientos.${index}`, shared = movement.persona === "compartido";
+  const percent = shared ? adjustmentPercent(movement) : Number(movement.porcentaje_compartido);
+  const payment = row?.pagos.find((item) => item.id === movement.id);
+  const fixed = movement.reparto === "fijo";
+  let controls = `<div class="field-grid">${selectField(`${path}.persona`, "Responsabilidad", movement.persona, peopleOptions(true), true)}`;
+  if (shared) controls += selectField(`${path}.reparto`, "Reparto", movement.reparto || "regla", [["regla", "Regla general"], ["fijo", "Porcentaje fijo"]], true);
+  controls += "</div>";
+  if (shared) {
+    controls += `<div class="sharing-control"><div class="range-row"><label for="adjust-${index}">Parte de ${escapeHtml(personName("el"))}</label><output class="range-value" for="adjust-${index}">${percent} %</output></div><input id="adjust-${index}" type="range" min="0" max="100" step="any" value="${percent}" data-adjust-index="${index}" aria-label="Parte de ${escapeHtml(personName("el"))} en ${escapeHtml(movement.concepto)}"><div class="split-labels"><span data-adjust-left>${escapeHtml(personName("el"))}${fixed ? ` ${percent}%` : ""}</span><output data-adjust-mode>${fixed ? "Fijo" : "Regla general"}</output><span data-adjust-right>${escapeHtml(personName("ella"))}${fixed ? ` ${Math.round((100 - percent) * 10000) / 10000}%` : ""}</span></div></div>${field(`${path}.porcentaje_el`, "Porcentaje de " + personName("el"), {value: fixed ? movement.porcentaje_el : percent, suffix: "%", max: 100, step: "any", disabled: !fixed})}<button type="button" class="button ghost small" data-adjust-reset="${index}" ${fixed ? "" : "hidden"}>Regla general</button>`;
+  } else {
+    controls += `<label class="toggle-row"><span>Socializar una parte</span><input class="checkbox" type="checkbox" data-share-toggle="${index}" ${percent > 0 ? "checked" : ""}></label>${percent > 0 ? sharing(`${path}.porcentaje_compartido`, movement.porcentaje_compartido, index) : ""}`;
+  }
+  const settings = deductionSettings(movement);
+  controls += toggle(`${path}.descontar_antes_reparto`, "Descontar antes de repartir", movement.descontar_antes_reparto, settings.hint, settings.disabled);
+  return `<details class="adjustment-card" data-socialization-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="socialization-summary"><strong>${escapeHtml(movement.concepto)}</strong><span class="adjustment-amount">${payment ? eur(payment.importe_centimos_eur) : "Sin pago este mes"}</span><small class="socialization-state">${escapeHtml(socializationState(movement))}</small><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="socialization-editor">${controls}</div></details>`;
+}
+
 function renderAdjustments() {
   if (!state.caso) return;
-  const focusId = document.activeElement?.dataset?.adjustIndex !== undefined ? document.activeElement.id : null;
+  const element = $("#adjustments-content"), active = document.activeElement;
+  const ownsFocus = active && element.contains(active);
+  const focusPath = ownsFocus ? active.dataset?.path : null;
+  const focusId = ownsFocus && active.dataset?.adjustIndex !== undefined ? active.id : null;
+  const focusShare = ownsFocus ? active.dataset?.shareToggle : undefined;
+  const open = new Set([...document.querySelectorAll(".adjustment-card[open]")].map((card) => card.dataset.socializationId));
   const row = state.result && selectedRow();
-  const movements = state.caso.movimientos.map((movement, index) => ({movement, index})).filter(({movement}) => movement.tipo !== "ingreso" && (movement.persona === "compartido" || Number(movement.porcentaje_compartido) > 0));
-  $("#adjustments-content").innerHTML = `<div class="adjustment-summary adjustments-toolbar"><h2>Gastos compartidos</h2></div><div class="adjustment-list">${movements.map(({movement, index}) => {
-    const shared = movement.persona === "compartido";
-    const percent = shared ? adjustmentPercent(movement) : Number(movement.porcentaje_compartido), payment = row?.pagos.find((item) => item.id === movement.id);
-    const left = shared ? `${personName("el")}${movement.reparto === "fijo" ? ` ${percent}%` : ""}` : `Personal ${Math.round((100 - percent) * 10000) / 10000}%`;
-    const right = shared ? `${personName("ella")}${movement.reparto === "fijo" ? ` ${Math.round((100 - percent) * 10000) / 10000}%` : ""}` : `Compartido ${percent}%`;
-    return `<article class="adjustment-card"><div class="adjustment-controls"><label for="adjust-${index}">${escapeHtml(movement.concepto)}</label><span class="adjustment-amount">${payment ? eur(payment.importe_centimos_eur) : "Sin pago este mes"}</span></div><input id="adjust-${index}" type="range" min="0" max="100" step="1" value="${percent}" data-adjust-index="${index}" aria-label="${shared ? "Parte de " + escapeHtml(personName("el")) : "Parte compartida"} en ${escapeHtml(movement.concepto)}"><div class="split-labels"><span data-adjust-left>${escapeHtml(left)}</span><output data-adjust-mode>${movement.reparto === "fijo" ? "Fijo" : "Regla general"}</output><span data-adjust-right>${escapeHtml(right)}</span></div><button type="button" class="button ghost small" data-adjust-reset="${index}" ${shared && movement.reparto === "fijo" ? "" : "hidden"}>Regla general</button></article>`;
-  }).join("") || '<p class="empty-state">Sin gastos compartidos.</p>'}</div>${state.escenario.regla === 'igualar' && movements.length ? '<p class="hint">Igualar margen puede compensar estos cambios con otros aportes.</p>' : ''}`;
-  if (focusId) document.getElementById?.(focusId)?.focus({preventScroll: true});
+  const movements = state.caso.movimientos.map((movement, index) => ({movement, index})).filter(({movement}) => movement.tipo !== "ingreso");
+  element.innerHTML = `<div class="adjustment-summary adjustments-toolbar"><h2>Socialización de gastos</h2></div><form id="socialization-controls" autocomplete="off"><div class="adjustment-list">${movements.map(({movement, index}) => socializationCard(movement, index, row, open.has(movement.id))).join("") || '<p class="empty-state">Sin gastos.</p>'}</div></form>${state.escenario.regla === "igualar" && movements.length ? '<p class="hint">Igualar margen puede compensar estos cambios con otros aportes.</p>' : ""}`;
+  if (focusPath) element.querySelector(`[data-path="${focusPath}"]`)?.focus({preventScroll: true});
+  else if (focusId) document.getElementById?.(focusId)?.focus({preventScroll: true});
+  else if (focusShare !== undefined) element.querySelector(`[data-share-toggle="${focusShare}"]`)?.focus({preventScroll: true});
+}
+
+function updateSocializationCard(card, movement, index) {
+  if (!card) return;
+  const shared = movement.persona === "compartido", percent = shared ? adjustmentPercent(movement) : Number(movement.porcentaje_compartido);
+  const fixed = movement.reparto === "fijo";
+  const setText = (selector, value) => { const node = card.querySelector(selector); if (node) node.textContent = value; };
+  setText(".socialization-state", socializationState(movement));
+  setText(".range-value", percent + " %");
+  setText("[data-adjust-left]", shared ? `${personName("el")}${fixed ? ` ${percent}%` : ""}` : `Personal ${100 - percent}%`);
+  setText("[data-adjust-right]", shared ? `${personName("ella")}${fixed ? ` ${Math.round((100 - percent) * 10000) / 10000}%` : ""}` : `Socializado ${percent}%`);
+  setText("[data-adjust-mode]", fixed ? "Fijo" : "Regla general");
+  const reset = card.querySelector("[data-adjust-reset]");
+  if (reset) reset.hidden = !shared || !fixed;
+  const mode = card.querySelector(`[data-path="caso.movimientos.${index}.reparto"]`);
+  if (mode) mode.value = movement.reparto;
+  const numeric = card.querySelector(`[data-path="caso.movimientos.${index}.porcentaje_el"]`);
+  if (numeric) {
+    numeric.disabled = !fixed;
+    if (document.activeElement !== numeric) numeric.value = String(percent);
+  }
+  const slider = card.querySelector("[data-adjust-index]");
+  if (slider) slider.value = String(percent);
+  const deduction = card.querySelector(`[data-path="caso.movimientos.${index}.descontar_antes_reparto"]`);
+  if (deduction) {
+    const settings = deductionSettings(movement);
+    deduction.disabled = settings.disabled;
+    const hint = deduction.closest(".toggle-row")?.querySelector(".hint");
+    if (hint) hint.textContent = settings.hint;
+  }
 }
 
 function handleAdjustment(event) {
   const input = event.target.closest("[data-adjust-index]");
   if (!input) return;
-  const movement = state.caso.movimientos[Number(input.dataset.adjustIndex)];
+  const index = Number(input.dataset.adjustIndex), movement = state.caso.movimientos[index];
   if (!movement || movement.tipo === "ingreso") return;
-  const percent = Math.min(100, Math.max(0, Number(input.value)));
+  const percent = Math.round(Math.min(100, Math.max(0, Number(input.value))) * 10000) / 10000;
   if (!Number.isFinite(percent)) return;
-  const shared = movement.persona === "compartido";
-  if (shared) {
+  if (movement.persona === "compartido") {
     movement.reparto = "fijo";
     movement.porcentaje_compartido = "100";
     movement.porcentaje_el = String(percent);
   } else movement.porcentaje_compartido = String(percent);
-  const card = input.closest(".adjustment-card");
-  if (card) {
-    card.querySelector("[data-adjust-left]").textContent = shared ? `${personName("el")} ${percent}%` : `Personal ${100 - percent}%`;
-    card.querySelector("[data-adjust-right]").textContent = shared ? `${personName("ella")} ${100 - percent}%` : `Compartido ${percent}%`;
-    card.querySelector("[data-adjust-mode]").textContent = shared ? "Fijo" : "Regla general";
-    card.querySelector("[data-adjust-reset]").hidden = !shared;
-  }
+  updateSocializationCard(input.closest(".adjustment-card"), movement, index);
   markEdited();
   renderMovementList(true);
   scheduleCalculation();
@@ -578,7 +613,7 @@ function handleControl(event) {
   if (shareToggle) {
     state.caso.movimientos[Number(shareToggle.dataset.shareToggle)].porcentaje_compartido = shareToggle.checked ? "50" : "0";
     markEdited();
-    renderMovementList(true);
+    renderAdjustments();
     scheduleCalculation();
     return;
   }
@@ -590,8 +625,9 @@ function handleControl(event) {
   if (/^caso\.personas\.(el|ella)\.nombre$/.test(path)) {
     updateNameLabels();
     renderMovementList(true);
+    renderAdjustments();
   }
-  if (input.type === "range") input.closest(".sharing-control").querySelector("output").textContent = value + " %";
+  if (input.type === "range") { const output = input.closest(".sharing-control")?.querySelector("output"); if (output) output.textContent = value + " %"; }
   const match = path.match(/^caso\.movimientos\.(\d+)\.(\w+)$/);
   if (match) {
     const i = Number(match[1]), movement = state.caso.movimientos[i];
@@ -627,22 +663,17 @@ function handleControl(event) {
       const card = input.closest(".movement-card");
       if (card) {
         card.querySelector("[data-summary-concept]").textContent = movement.concepto || "Sin concepto";
-        card.querySelector("[data-summary-schedule]").textContent = `${movementResponsibility(movement)} · ${movementSchedule(movement)}`;
+        card.querySelector("[data-summary-schedule]").textContent = `${movement.tipo === "ingreso" ? personName(movement.persona) : "Pagado por " + personName(movement.pagador)} · ${movementSchedule(movement)}`;
         card.querySelector("[data-summary-amount]").textContent = originalMoney(movement.importe, movement.moneda);
         const paid = card.querySelector(`[data-path="caso.movimientos.${i}.cuotas_pagadas"]`);
         if (paid) paid.max = movement.cuotas;
-        const split = card.querySelector("[data-split-result]");
-        if (split) split.textContent = `${personName("ella")} ${movement.porcentaje_el !== "" ? Math.round((100 - Number(movement.porcentaje_el)) * 10000) / 10000 : "—"}%`;
-        if (match[2] === "porcentaje_compartido") {
-          const deduction = card.querySelector(`[data-path="caso.movimientos.${i}.descontar_antes_reparto"]`);
-          if (deduction) {
-            const settings = deductionSettings(movement);
-            deduction.disabled = settings.disabled;
-            deduction.closest(".toggle-row").querySelector(".hint").textContent = settings.hint;
-          }
-        }
+
       }
     }
+    const socialCard = input.closest(".adjustment-card");
+    if (["persona", "reparto"].includes(match[2])) renderAdjustments();
+    else if (socialCard) updateSocializationCard(socialCard, movement, i);
+    else if (!["descontar_antes_reparto", "porcentaje_el", "porcentaje_compartido"].includes(match[2])) renderAdjustments();
   }
   markEdited();
   updateRuleHelp();
@@ -660,7 +691,7 @@ function handleArrayActions(event) {
   if (add) {
     const type = add.dataset.addMovement;
     if (!Object.hasOwn(TYPES, type)) return;
-    const movement = {id: uniqueId(), concepto: type === "ingreso" ? "Nuevo ingreso" : "Nuevo gasto", tipo: type, persona: type === "gasto" ? "compartido" : "el", pagador: "el", importe: "0.00", moneda: "EUR", fecha: state.caso.inicio + "-01", modalidad: "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: type === "gasto" ? "100" : "0", reparto: "regla", porcentaje_el: "50", cuenta_id: "", grupo: "", etiquetas: [], marcar_grafico: false};
+    const movement = {id: uniqueId(), concepto: type === "ingreso" ? "Nuevo ingreso" : "Nuevo gasto", tipo: type, persona: "el", pagador: "el", importe: "0.00", moneda: "EUR", fecha: state.caso.inicio + "-01", modalidad: "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: "0", reparto: "regla", porcentaje_el: "50", cuenta_id: "", grupo: "", etiquetas: [], marcar_grafico: false};
     if (type === "gasto") movement.descontar_antes_reparto = false;
     state.caso.movimientos.push(movement);
     state.activeMovement = movement.id;
@@ -805,7 +836,7 @@ async function resetPlan() {
   $("#data-mode").textContent = "Vacío";
   $("#restore-plan").hidden = !savedPlan();
   renderControls();
-  setTab("projection");
+  setTab("records");
   await calculate();
 }
 
@@ -821,7 +852,12 @@ function bindEvents() {
   window.FinanzasOperativa?.bind(operativaContext());
   window.FinanzasEquivalencia?.bind(operativaContext());
   $("#sharing-month").addEventListener("change", (event) => selectMonth(event.target.value));
-  $("#adjustments-content").addEventListener("input", handleAdjustment);
+  $("#adjustments-content").addEventListener("submit", (event) => event.preventDefault());
+  $("#adjustments-content").addEventListener("input", (event) => {
+    if (event.target.closest("[data-adjust-index]")) handleAdjustment(event);
+    else handleControl(event);
+  });
+  $("#adjustments-content").addEventListener("change", (event) => { if (event.target.tagName === "SELECT") handleControl(event); });
   $("#adjustments-content").addEventListener("click", (event) => {
     const button = event.target.closest("[data-adjust-reset]");
     if (!button) return;
@@ -879,7 +915,7 @@ function bindEvents() {
   $("#restore-plan").addEventListener("click", restoreSavedPlan);
   $("#reset").addEventListener("click", resetPlan);
   $("#download").addEventListener("click", () => {
-    if (!$("#controls").checkValidity() || window.FinanzasOperativa?.checkValidity() === false || !$("#error").hidden || document.body.classList.contains("calculating")) { toast("Revisa los campos antes de exportar."); return; }
+    if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || $("#socialization-controls")?.checkValidity() === false || window.FinanzasOperativa?.checkValidity() === false || !$("#error").hidden || document.body.classList.contains("calculating")) { toast("Revisa los campos antes de exportar."); return; }
     const blob = new Blob([JSON.stringify(exportablePlan(), null, 2)], {type: "application/json"});
     const anchor = document.createElement("a");
     const url = URL.createObjectURL(blob);
