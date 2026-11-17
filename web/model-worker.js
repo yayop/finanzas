@@ -54,7 +54,9 @@ async function createRuntime() {
   const [{loadPyodide}, sources] = await Promise.all([
     import(PYODIDE_URL + "pyodide.mjs"),
     Promise.all(FILES.map(async ([asset, filename]) => {
-      const response = await fetch(new URL(asset, self.location.href), {cache: "no-store"});
+      const url = new URL(asset, self.location.href);
+      url.search = new URL(self.location.href).search;
+      const response = await fetch(url, {cache: "no-store"});
       if (!response.ok) throw new Error("No se pudo cargar " + asset);
       return [filename, await response.text()];
     }))

@@ -53,7 +53,7 @@ test("muestra las dos tasas de CPython y el mismo excedente sin volver a calcula
   assert.match(ui.element.innerHTML, /33,333333\s*%/);
   assert.match(ui.element.innerHTML, /40\s*%/);
   assert.match(ui.element.innerHTML, /60\s*%/);
-  assert.match(ui.element.innerHTML, /E′ = E para cada persona/);
+  assert.match(ui.element.innerHTML, /M′ = M para cada persona/);
   for (const amount of [...Object.values(value.costos_originales_centimos_eur), ...Object.values(value.excedentes_originales_centimos_eur)]) {
     assert.ok(ui.element.innerHTML.includes(escapeHtml(eur(amount))));
   }
@@ -73,10 +73,10 @@ test("un gasto sin descontar conserva su costo completo y no reduce la base prop
   assert.deepEqual(value.base_reparto_centimos_eur, {el: 200000, ella: 200000});
   assert.deepEqual(value.costos_originales_centimos_eur, {el: 75000, ella: 175000});
   assert.deepEqual(value.excedentes_equivalentes_centimos_eur, {el: 125000, ella: 25000});
-  assert.match(ui.element.innerHTML, /Descontados antes de repartir · D/);
-  assert.match(ui.element.innerHTML, /D descuenta la parte ya asignada de los gastos marcados/);
-  const assignedRow = ui.element.innerHTML.match(/<th scope="row">Gastos ya asignados · G<\/th>(.*?)<\/tr>/)[1];
-  const discountedRow = ui.element.innerHTML.match(/<th scope="row">Descontados antes de repartir · D<\/th>(.*?)<\/tr>/)[1];
+  assert.match(ui.element.innerHTML, /Obligaciones reconocidas · G/);
+  assert.match(ui.element.innerHTML, /G recoge las obligaciones reconocidas/);
+  const assignedRow = ui.element.innerHTML.match(/<th scope="row">Gastos ya asignados · C<\/th>(.*?)<\/tr>/)[1];
+  const discountedRow = ui.element.innerHTML.match(/<th scope="row">Obligaciones reconocidas · G<\/th>(.*?)<\/tr>/)[1];
   assert.ok(assignedRow.includes(escapeHtml(eur(100000))));
   assert.ok(!discountedRow.includes(escapeHtml(eur(100000))));
   assert.match(ui.element.innerHTML, /30\s*%/);
@@ -101,7 +101,7 @@ test("descontar un gasto modifica la base neta y conserva todos los gastos en la
   ui.state.escenario.regla = "mitades";
   ui.state.result = simulate(plan);
   ui.api.render(ui.context);
-  assert.doesNotMatch(ui.element.innerHTML, /Descontados antes de repartir · D|Neto de reparto es ingreso considerado menos gastos seleccionados/);
+  assert.doesNotMatch(ui.element.innerHTML, /Obligaciones reconocidas · G|Neto de reparto es ingreso considerado menos gastos seleccionados/);
 });
 
 test("delegación única y perspectiva persistente al cambiar el mes desde Reparto", () => {
@@ -150,7 +150,7 @@ test("sin gastos no inventa una tasa única aunque el excedente sea calculable",
   plan.caso.movimientos = plan.caso.movimientos.filter((record) => record.tipo === "ingreso");
   const ui = harness(plan);
   assert.match(ui.element.innerHTML, /Sin gastos: α′ no está definida/);
-  assert.match(ui.element.innerHTML, /E′ = E para cada persona/);
+  assert.match(ui.element.innerHTML, /M′ = M para cada persona/);
   ui.emit("click", "[data-eq-perspective]", {dataset: {eqPerspective: "unica"}});
   assert.match(ui.element.innerHTML, /class="eq-rate">—<\/strong>/);
   assert.equal(ui.state.result.meses[0].reparto_equivalente.alpha_prima, null);
@@ -163,7 +163,7 @@ test("una redistribución sin gastos no se presenta como una equivalencia posibl
   plan.caso.movimientos[0].importe = "3000";
   const ui = harness(plan);
   assert.match(ui.element.innerHTML, /Una tasa sobre un gasto total de cero no puede representar/);
-  assert.doesNotMatch(ui.element.innerHTML, /E′ = E para cada persona/);
+  assert.doesNotMatch(ui.element.innerHTML, /M′ = M para cada persona/);
   assert.equal(ui.state.result.meses[0].reparto_equivalente.costos_equivalentes_centimos_eur, null);
 });
 
@@ -190,7 +190,7 @@ test("explica extras excluidos y repartos fijos sin reclasificar los movimientos
   const ui = harness(plan);
   assert.match(ui.element.innerHTML, /Ingreso considerado para el reparto/);
   assert.match(ui.element.innerHTML, /Los ingresos excluidos del reparto siguen incluidos en el excedente/);
-  assert.match(ui.element.innerHTML, /Los repartos fijos entran en G; usa Regla general en los gastos comunes/);
+  assert.match(ui.element.innerHTML, /Los repartos fijos entran en C; usa Regla general en los gastos comunes/);
   assert.equal(ui.state.caso.movimientos[3].reparto, "fijo");
   assert.ok(ui.element.innerHTML.includes(escapeHtml(eur(224400))));
 });
@@ -207,4 +207,14 @@ test("escapa nombres y mantiene el foco del control al actualizar", () => {
   ui.element.querySelector = (selector) => selector === '[data-eq-key="unica"]' ? {focus: () => {focused = true;}} : null;
   ui.api.render(ui.context);
   assert.equal(focused, true);
+});
+
+test("tasas con fracciones grandes se muestran sin desbordar los números del navegador", () => {
+  const ui = harness();
+  const value = ui.state.result.meses[0].reparto_equivalente;
+  const denominator = 10n ** 400n;
+  value.alpha = {el: {numerador: String(denominator / 2n), denominador: String(denominator)}, ella: {numerador: String(denominator / 2n), denominador: String(denominator)}};
+  ui.api.render(ui.context);
+  assert.match(ui.element.innerHTML, /50\s*%/);
+  assert.doesNotMatch(ui.element.innerHTML, /NaN|Infinity/);
 });

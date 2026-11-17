@@ -171,7 +171,7 @@ test("el build estático incluye solo archivos permitidos y carga operativa y tr
   const temporary = mkdtempSync(path.join(tmpdir(), "finanzas-pages-test-"));
   try {
     const assets = [
-      ...["index.html", "styles.css", "app.js", "operativa.js", "equivalencia.js", "browser-model.js", "model-worker.js"].map((name) => "web/" + name),
+      ...["index.html", "styles.css", "app.js", "operativa.js", "equivalencia.js", "progresividad.js", "historial.js", "browser-model.js", "model-worker.js", "service-worker.js"].map((name) => "web/" + name),
       ...["modelo.py", "operativa.py", "migracion.py", "simular_ejemplo.py"].map((name) => "scripts/" + name),
       "ejemplos/caso_ficticio.json"
     ];
@@ -190,7 +190,7 @@ test("el build estático incluye solo archivos permitidos y carga operativa y tr
     function files(directory) {
       return readdirSync(directory, {withFileTypes: true}).flatMap((entry) => entry.isDirectory() ? files(path.join(directory, entry.name)).map((name) => entry.name + "/" + name) : [entry.name]).sort();
     }
-    assert.deepEqual(files(dist), [".nojekyll", "app.js", "browser-model.js", "ejemplos/caso_ficticio.json", "equivalencia.js", "index.html", "model-worker.js", "operativa.js", "python/migracion.py", "python/modelo.py", "python/operativa.py", "python/simular_ejemplo.py", "styles.css"]);
+    assert.deepEqual(files(dist), [".nojekyll", "app.js", "browser-model.js", "ejemplos/caso_ficticio.json", "equivalencia.js", "historial.js", "index.html", "model-worker.js", "operativa.js", "progresividad.js", "python/migracion.py", "python/modelo.py", "python/operativa.py", "python/simular_ejemplo.py", "service-worker.js", "styles.css"]);
     const html = readFileSync(path.join(dist, "index.html"), "utf8");
     const version = html.match(/browser-model\.js\?v=([a-f0-9]{12})/)[1];
     const transport = `<script src="browser-model.js?v=${version}" defer></script>`;

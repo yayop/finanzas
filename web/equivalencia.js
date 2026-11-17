@@ -14,7 +14,7 @@
     const numerator = BigInt(value.numerador), denominator = BigInt(value.denominador);
     if (!denominator) return "—";
     // The quotient is used only for display. Monetary values come directly from Python.
-    return percent.format(Number(numerator) / Number(denominator));
+    return percent.format(Number(numerator * 1000000000000000000n / denominator) / 1e18);
   }
 
   function sameRates(a, b) {
@@ -34,8 +34,8 @@
     const lines = [
       line("Ingreso real · I", row.ingresos_reales_centimos_eur),
       excluded ? line("Ingreso considerado para el reparto", row.ingresos_considerados_centimos_eur) : "",
-      line("Gastos ya asignados · G", value.gastos_previos_centimos_eur),
-      ctx.state.escenario.regla === "proporcional_disponible" ? line("Descontados antes de repartir · D", value.gastos_descontados_centimos_eur ?? value.gastos_previos_centimos_eur) : "",
+      line("Gastos ya asignados · C", value.gastos_previos_centimos_eur),
+      ["proporcional_disponible", "progresivo"].includes(ctx.state.escenario.regla) ? line("Obligaciones reconocidas · G", value.gastos_descontados_centimos_eur ?? value.gastos_previos_centimos_eur) : "",
       line("Base de reparto", value.base_reparto_centimos_eur),
       rates("α · gastos comunes", value.alpha),
       !sameRates(value.alpha, value.alpha_efectiva_comunes) && value.alpha_efectiva_comunes ? rates("α efectiva tras redondear los céntimos", value.alpha_efectiva_comunes) : "",
@@ -43,9 +43,9 @@
       line("Aporte a gastos comunes", row.asignacion_comunes_centimos_eur),
       line("Costo por compromisos", value.costos_originales_centimos_eur),
       line("Costo con tasa única", value.costos_equivalentes_centimos_eur),
-      line("Excedente por compromisos · E", value.excedentes_originales_centimos_eur, undefined, "eq-match"),
-      line("Excedente con tasa única · E′", value.excedentes_equivalentes_centimos_eur, undefined, "eq-match"),
-      line("Diferencia · E′ − E", value.diferencia_centimos_eur)
+      line("Margen por compromisos · M", value.excedentes_originales_centimos_eur, undefined, "eq-match"),
+      line("Margen con tasa única · M′", value.excedentes_equivalentes_centimos_eur, undefined, "eq-match"),
+      line("Diferencia · M′ − M", value.diferencia_centimos_eur)
     ];
     return `<div class="table-wrap"><table class="eq-table"><caption>Comparación mensual · EUR</caption><thead><tr><th scope="col">Concepto</th>${people.map((person) => `<th scope="col">${e(ctx.personName(person))}</th>`).join("")}</tr></thead><tbody>${lines.join("")}</tbody></table></div>`;
   }
@@ -65,15 +65,15 @@
     const rounded = value.alpha_efectiva_comunes && !sameRates(value.alpha, value.alpha_efectiva_comunes);
     const equivalent = value.diferencia_centimos_eur && people.every((person) => value.diferencia_centimos_eur[person] === 0);
     const fixed = row.pagos?.some((payment) => payment.reparto === "fijo");
-    let status = "";
+    let status = value.estado === "sin_reparto" ? '<p class="warning-note">El presupuesto requiere resolver su déficit para calcular una tasa equivalente.</p>' : "";
     if (value.estado === "sin_gastos") status = '<p class="eq-status">Sin gastos: α′ no está definida. El excedente es el ingreso.</p>';
     if (value.estado === "no_representable_sin_gastos") status = '<p class="eq-status">Sin gastos: Igualar margen redistribuye ingresos. Una tasa sobre un gasto total de cero no puede representar esa compensación.</p>';
-    return `${status}${equivalent ? '<p class="eq-match">E′ = E para cada persona · diferencia 0,00 €</p>' : ""}${value.tasas_fuera_de_rango ? '<p class="eq-status">Hay tasas fuera de 0–100 %. Un costo negativo representa recibir dinero.</p>' : ""}<p class="eq-note">Gastos comunes G<sub>c</sub>: ${e(ctx.eur(value.gastos_comunes_centimos_eur, 2))} · Total G<sub>c</sub> + G<sub>1</sub> + G<sub>2</sub>: ${e(ctx.eur(value.total_gastos_centimos_eur, 2))}</p>${ctx.state.escenario.regla === "proporcional_disponible" ? '<p class="eq-note">D descuenta la parte ya asignada de los gastos marcados y las comisiones de cambio. Todos los gastos siguen contando en el costo y el excedente.</p>' : ""}${value.gastos_comunes_centimos_eur === 0 && fixed ? '<p class="eq-note">Los repartos fijos entran en G; usa Regla general en los gastos comunes.</p>' : ""}${excluded ? '<p class="eq-note">Los ingresos excluidos del reparto siguen incluidos en el excedente.</p>' : ""}${rounded ? '<p class="eq-note">α′ usa el aporte común ya redondeado al céntimo.</p>' : ""}`;
+    return `${status}${equivalent ? '<p class="eq-match">M′ = M para cada persona · diferencia 0,00 €</p>' : ""}${value.tasas_fuera_de_rango ? '<p class="eq-status">Hay tasas fuera de 0–100 %. Un costo negativo representa recibir dinero.</p>' : ""}<p class="eq-note">Gastos comunes G<sub>c</sub>: ${e(ctx.eur(value.gastos_comunes_centimos_eur, 2))} · Total G<sub>c</sub> + C<sub>1</sub> + C<sub>2</sub>: ${e(ctx.eur(value.total_gastos_centimos_eur, 2))}</p>${ctx.state.escenario.regla === "proporcional_disponible" ? '<p class="eq-note">G recoge las obligaciones reconocidas y las comisiones de cambio. Todos los gastos siguen contando en el costo y el excedente.</p>' : ""}${value.gastos_comunes_centimos_eur === 0 && fixed ? '<p class="eq-note">Los repartos fijos entran en C; usa Regla general en los gastos comunes.</p>' : ""}${excluded ? '<p class="eq-note">Los ingresos excluidos del reparto siguen incluidos en el excedente.</p>' : ""}${rounded ? '<p class="eq-note">α′ usa el aporte común ya redondeado al céntimo.</p>' : ""}`;
   }
 
   function formula(ctx) {
     const net = ctx.state.escenario.regla === "proporcional_disponible";
-    return `<div class="eq-formula">${net ? '<p aria-label="Neto de reparto es ingreso considerado menos gastos seleccionados. Alfa es el neto de cada persona dividido por la suma de los netos.">N<sub>k</sub> = I<sub>considerado,k</sub> − D<sub>k</sub> · α<sub>k</sub> = N<sub>k</sub> / (N<sub>1</sub> + N<sub>2</sub>)</p>' : ""}<p aria-label="Alfa prima de cada persona es su gasto ya asignado más su aporte a los gastos comunes, dividido por el gasto total.">α′<sub>k</sub> = (G<sub>k</sub> + α<sub>k</sub> G<sub>c</sub>) / (G<sub>c</sub> + G<sub>1</sub> + G<sub>2</sub>)</p></div>`;
+    return `<div class="eq-formula">${net ? '<p aria-label="Neto de reparto es ingreso considerado menos gastos seleccionados. Alfa es el neto de cada persona dividido por la suma de los netos.">N<sub>k</sub> = I<sub>considerado,k</sub> − G<sub>k</sub> · α<sub>k</sub> = N<sub>k</sub> / (N<sub>1</sub> + N<sub>2</sub>)</p>' : ""}<p aria-label="Alfa prima de cada persona es su gasto ya asignado más su aporte a los gastos comunes, dividido por el gasto total.">α′<sub>k</sub> = (C<sub>k</sub> + α<sub>k</sub> G<sub>c</sub>) / (G<sub>c</sub> + C<sub>1</sub> + C<sub>2</sub>)</p></div>`;
   }
 
   function render(ctx) {

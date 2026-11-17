@@ -6,6 +6,7 @@ Una fecha de cuotas indica siempre el próximo pago pendiente.
 """
 
 import calendar
+import math
 import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -13,7 +14,7 @@ from fractions import Fraction
 
 
 PERSONAS = ("el", "ella")
-REGLAS = ("mitades", "proporcional", "proporcional_disponible", "manual", "igualar")
+REGLAS = ("mitades", "proporcional", "proporcional_disponible", "manual", "igualar", "progresivo")
 MAX_MOVIMIENTOS = 1000
 MAX_ENTERO_SEGURO = 9007199254740991
 
@@ -67,6 +68,27 @@ def _porcentaje(valor, campo):
     if not 0 <= numero <= 100:
         raise ValueError(campo + " debe estar entre 0 y 100")
     return numero
+
+
+def _gamma(valor, campo="gamma"):
+    numero = _decimal(valor, campo)
+    if numero < 0:
+        raise ValueError(campo + " debe ser mayor o igual a cero")
+    return numero
+
+
+def _estados(registro, campo):
+    estado = registro.get("estado", "previsto")
+    if estado not in ("previsto", "pagado"):
+        raise ValueError("estado de " + campo + " debe ser previsto o pagado")
+    por_mes = registro.get("estados_por_mes", {})
+    if not isinstance(por_mes, dict) or len(por_mes) > 1000:
+        raise ValueError("estados_por_mes debe ser un objeto de hasta 1000 meses")
+    for mes, valor in por_mes.items():
+        _mes(mes, "mes de estados_por_mes")
+        if valor not in ("previsto", "pagado"):
+            raise ValueError("Cada estado mensual debe ser previsto o pagado")
+    return estado, dict(por_mes)
 
 
 def _persona(valor, campo):
@@ -175,6 +197,7 @@ def _preparar(caso, escenario):
             raise ValueError("Hay id de movimiento duplicados: " + identificador)
         identificadores.add(identificador)
         _texto(movimiento.get("concepto"), "concepto de " + identificador)
+        movimiento["estado"], movimiento["estados_por_mes"] = _estados(movimiento, identificador)
         grupo = movimiento.get("grupo", "")
         if not isinstance(grupo, str) or len(grupo) > 80:
             raise ValueError("grupo debe ser texto de hasta 80 caracteres")
@@ -252,6 +275,16 @@ def _preparar(caso, escenario):
     _booleano(escenario.get("incluir_extra"), "incluir_extra")
     if escenario["regla"] == "manual":
         _porcentaje(escenario.get("porcentaje_el"), "porcentaje_el")
+    if "gamma" in escenario or escenario["regla"] == "progresivo":
+        escenario["gamma"] = str(_gamma(escenario.get("gamma", "1")))
+    overrides = escenario.get("gamma_por_mes", {})
+    if not isinstance(overrides, dict) or len(overrides) > 1000:
+        raise ValueError("gamma_por_mes debe ser un objeto de hasta 1000 meses")
+    for mes, valor in overrides.items():
+        _mes(mes, "mes de gamma_por_mes")
+        _gamma(valor, "gamma de " + mes)
+    if "gamma_por_mes" in escenario:
+        escenario["gamma_por_mes"] = dict(overrides)
     _operativa_modulo().preparar_operativa(caso, movimientos)
     return movimientos, escenario
 
@@ -323,6 +356,174 @@ def _cero():
     return {p: 0 for p in PERSONAS}
 
 
+def _log_fraccion(valor):
+    try:
+        razon = float(valor)
+    except OverflowError:
+        razon = math.inf
+    if razon > 0 and math.isfinite(razon):
+        return math.log(razon)
+    return math.log(valor.numerator) - math.log(valor.denominator)
+
+
+def resolver_progresividad(disponible, comunes, gamma="1"):
+    """Resuelve α/(1−α)=(P1/P2)^γ, manteniendo importes en céntimos.
+
+    La raíz se busca dentro del intervalo factible mediante bisección. Las
+    evaluaciones usan logaritmos y las cotas se conservan como fracciones para
+    redondear el dinero una sola vez. Con excedente total cero, la restricción
+    presupuestaria fija una única asignación, como límite del modelo.
+    """
+    gamma = _gamma(gamma)
+    if set(disponible) != set(PERSONAS) or any(type(v) is not int for v in disponible.values()):
+        raise ValueError("disponible debe contener importes enteros de el y ella")
+    if type(comunes) is not int or comunes < 0:
+        raise ValueError("comunes debe ser un importe entero no negativo")
+    a, b = disponible["el"], disponible["ella"]
+    total = a + b - comunes
+    resultado = {"gamma": str(gamma), "estado": "calculado", "alpha": None,
+                 "alpha_fracciones": None, "contribucion_centimos_eur": None,
+                 "personal_centimos_eur": None, "personal_total_centimos_eur": total,
+                 "deficit_centimos_eur": max(0, -total), "advertencia": ""}
+    parte = None
+    if gamma == 0:
+        parte = Fraction(1, 2)
+    elif a < 0 or b < 0 or total < 0:
+        resultado.update(estado="deficit", advertencia="Los recursos disponibles no permiten un reparto factible.")
+        return resultado
+    elif a == b == comunes == 0:
+        resultado.update(estado="sin_reparto", contribucion_centimos_eur=_cero(), personal_centimos_eur=_cero(),
+                         advertencia="Sin ingresos disponibles ni gastos comunes, la tasa queda sin definir.")
+        return resultado
+    elif total == 0:
+        parte = Fraction(a, comunes)
+        resultado.update(estado="agotado", advertencia="Todo el ingreso disponible cubre los gastos comunes; la tasa es el único reparto factible, límite del modelo.")
+    elif a == 0:
+        parte = Fraction(0)
+    elif b == 0:
+        parte = Fraction(1)
+    elif comunes == 0:
+        # En este caso P=A para cualquier tasa. La ecuación se resuelve sin
+        # circularidad, evitando desbordamientos al elevar potencias grandes.
+        diferencia = float(gamma) * math.log(a / b)
+        if diferencia >= 0:
+            parte = Fraction.from_float(1 / (1 + math.exp(-diferencia)))
+        else:
+            potencia = math.exp(diferencia)
+            parte = Fraction.from_float(potencia / (1 + potencia))
+    elif gamma == 1:
+        parte = Fraction(a, a + b)
+    else:
+        inferior = max(Fraction(0), Fraction(comunes - b, comunes))
+        superior = min(Fraction(1), Fraction(a, comunes))
+        for paso in range(2048):
+            medio = (inferior + superior) / 2
+            p1, p2 = a - medio * comunes, b - (1 - medio) * comunes
+            if medio == 0 or p2 <= 0:
+                residual = -math.inf
+            elif medio == 1 or p1 <= 0:
+                residual = math.inf
+            else:
+                residual = _log_fraccion(medio / (1 - medio)) - float(gamma) * _log_fraccion(p1 / p2)
+                if abs(residual) < 1e-12 and (superior - inferior) * comunes < Fraction(1, 10 ** 6):
+                    inferior = superior = medio
+                    break
+            if paso >= 100 and gamma >= 1 and superior - inferior < Fraction(1, 10 ** 25):
+                break
+            if residual > 0:
+                superior = medio
+            else:
+                inferior = medio
+        parte = (inferior + superior) / 2
+    aporte = _redondear(parte * comunes)
+    if gamma > 0:
+        # El redondeo final conserva factibilidad y la suma exacta en céntimos.
+        aporte = max(max(0, comunes - b), min(min(comunes, a), aporte))
+    contribucion = {"el": aporte, "ella": comunes - aporte}
+    personal = {p: disponible[p] - contribucion[p] for p in PERSONAS}
+    if gamma == 0 and any(v < 0 for v in personal.values()):
+        resultado.update(estado="deficit" if total < 0 else "deficit_individual",
+                         advertencia="El reparto 50/50 deja dinero personal negativo.")
+    resultado.update(alpha={"el": float(parte), "ella": float(1 - parte)},
+                     alpha_fracciones={p: {"numerador": str(v.numerator), "denominador": str(v.denominator)}
+                                       for p, v in (("el", parte), ("ella", 1 - parte))},
+                     contribucion_centimos_eur=contribucion, personal_centimos_eur=personal)
+    return resultado
+
+
+def _presupuesto(escenario, mes, reales, descontados, comunes, asignacion=None):
+    disponible = {p: reales[p] - descontados[p] for p in PERSONAS}
+    gamma = escenario.get("gamma_por_mes", {}).get(mes, escenario.get("gamma", "1"))
+    if escenario["regla"] == "progresivo":
+        resultado = resolver_progresividad(disponible, comunes, gamma)
+    else:
+        personal = {p: disponible[p] - asignacion[p] for p in PERSONAS}
+        resultado = {"estado": "calculado", "gamma": str(gamma),
+                     "alpha": {p: asignacion[p] / comunes for p in PERSONAS} if comunes else None,
+                     "contribucion_centimos_eur": dict(asignacion), "personal_centimos_eur": personal,
+                     "personal_total_centimos_eur": sum(personal.values()),
+                     "deficit_centimos_eur": max(0, -sum(personal.values())), "advertencia": ""}
+        if any(v < 0 for v in personal.values()):
+            resultado.update(estado="deficit" if sum(personal.values()) < 0 else "deficit_individual",
+                             advertencia="El reparto deja dinero personal negativo.")
+    resultado.update(ingresos_centimos_eur=dict(reales), gastos_socializados_centimos_eur=dict(descontados),
+                     disponible_centimos_eur=disponible, gastos_comunes_centimos_eur=comunes)
+    return resultado
+
+
+def _costos_pagos(pagos, comunes, asignacion):
+    """Asigna cada céntimo común una sola vez, conservando el total del mes."""
+    acumulado, anterior = 0, 0
+    for pago in pagos:
+        comun = pago["importe_comun_centimos_eur"]
+        asignado = pago["importe_asignado_centimos_eur"]
+        if comun and asignacion is None:
+            pago["costo_asumido_centimos_eur"] = None
+            pago["costo_comun_centimos_eur"] = None
+            continue
+        acumulado += comun
+        actual = _redondear(Fraction(acumulado * asignacion["el"], comunes)) if comunes and asignacion else 0
+        parte = {"el": actual - anterior, "ella": comun - actual + anterior}
+        pago["costo_comun_centimos_eur"] = parte
+        pago["costo_asumido_centimos_eur"] = {p: asignado[p] + parte[p] for p in PERSONAS}
+        anterior = actual
+
+
+def _ejecucion(pagos, ingresos, presupuesto):
+    reales, egresos, personales, obligaciones, fisicos = (_cero() for _ in range(5))
+    sin_asignacion = False
+    for ingreso in ingresos:
+        if ingreso["estado"] == "pagado":
+            reales[ingreso["persona"]] += ingreso["importe_centimos_eur"]
+    for pago in pagos:
+        if pago["estado"] != "pagado":
+            continue
+        fisicos[pago["pagador"]] += pago["importe_centimos_eur"]
+        if pago["costo_asumido_centimos_eur"] is None:
+            sin_asignacion = True
+            continue
+        for persona in PERSONAS:
+            egresos[persona] += pago["costo_asumido_centimos_eur"][persona]
+            socializado = pago["importe_descontado_centimos_eur"][persona]
+            obligaciones[persona] += socializado + pago["costo_comun_centimos_eur"][persona]
+            personales[persona] += pago["importe_asignado_centimos_eur"][persona] - socializado
+    pendientes = None
+    if presupuesto["contribucion_centimos_eur"] is not None and not sin_asignacion:
+        pendientes = {p: presupuesto["gastos_socializados_centimos_eur"][p] + presupuesto["contribucion_centimos_eur"][p] - obligaciones[p]
+                      for p in PERSONAS}
+    ingresos_pendientes = {p: presupuesto["ingresos_centimos_eur"][p] - reales[p] for p in PERSONAS}
+    return {"ingresos_centimos_eur": reales, "egresos_centimos_eur": None if sin_asignacion else egresos,
+            "gastos_personales_centimos_eur": personales,
+            "obligaciones_pagadas_centimos_eur": None if sin_asignacion else obligaciones,
+            "obligaciones_pendientes_centimos_eur": pendientes,
+            "ingresos_pendientes_centimos_eur": ingresos_pendientes,
+            "pagos_fisicos_centimos_eur": fisicos,
+            "saldo_centimos_eur": None if sin_asignacion else {p: reales[p] - egresos[p] for p in PERSONAS},
+            "saldo_fisico_centimos_eur": {p: reales[p] - fisicos[p] for p in PERSONAS},
+            "gasto_sin_asignar_centimos_eur": sum(pago["importe_comun_centimos_eur"] for pago in pagos
+                                                       if pago["estado"] == "pagado" and pago["costo_asumido_centimos_eur"] is None)}
+
+
 def _asignacion(escenario, mes, comunes, considerados, personales, descontados):
     regla = escenario["regla"]
     if regla == "mitades":
@@ -345,7 +546,7 @@ def _asignacion(escenario, mes, comunes, considerados, personales, descontados):
     return {"el": el, "ella": comunes - el}
 
 
-def _reparto_equivalente(escenario, reales, considerados, personales, descontados, comunes, asignacion):
+def _reparto_equivalente(escenario, reales, considerados, personales, descontados, comunes, asignacion, presupuesto=None):
     """Expresa el costo mensual ya acordado como una tasa sobre todo el gasto.
 
     Las tasas viajan como fracciones de texto: no se redondean porcentajes para
@@ -362,8 +563,17 @@ def _reparto_equivalente(escenario, reales, considerados, personales, descontado
                     "denominador": str(valores[p].denominator)} for p in PERSONAS}
 
     regla = escenario["regla"]
-    base = {p: considerados[p] - (descontados[p] if regla == "proporcional_disponible" else 0)
+    base = {p: (reales[p] if regla == "progresivo" else considerados[p]) - (descontados[p] if regla in ("proporcional_disponible", "progresivo") else 0)
             for p in PERSONAS}
+    if asignacion is None:
+        return {"estado": "sin_reparto", "gastos_previos_centimos_eur": dict(personales),
+                "gastos_descontados_centimos_eur": dict(descontados),
+                "gastos_no_descontados_centimos_eur": {p: personales[p] - descontados[p] for p in PERSONAS},
+                "gastos_comunes_centimos_eur": comunes, "total_gastos_centimos_eur": sum(personales.values()) + comunes,
+                "base_reparto_centimos_eur": base, "alpha": None, "alpha_efectiva_comunes": None, "alpha_prima": None,
+                "costos_originales_centimos_eur": None, "costos_equivalentes_centimos_eur": None,
+                "excedentes_originales_centimos_eur": None, "excedentes_equivalentes_centimos_eur": None,
+                "diferencia_centimos_eur": None, "tasas_fuera_de_rango": False}
     alpha = None
     if regla == "mitades":
         alpha = {p: Fraction(1, 2) for p in PERSONAS}
@@ -373,6 +583,9 @@ def _reparto_equivalente(escenario, reales, considerados, personales, descontado
     elif regla in ("proporcional", "proporcional_disponible"):
         if all(valor >= 0 for valor in base.values()) and sum(base.values()) > 0:
             alpha = {p: Fraction(base[p], sum(base.values())) for p in PERSONAS}
+    elif regla == "progresivo" and presupuesto:
+        valores = presupuesto.get("alpha_fracciones")
+        alpha = {p: Fraction(int(valores[p]["numerador"]), int(valores[p]["denominador"])) for p in PERSONAS} if valores else None
     elif comunes:
         # Igualar puede incluir una compensación además del gasto común.
         alpha = {p: Fraction(asignacion[p], comunes) for p in PERSONAS}
@@ -429,11 +642,17 @@ def simular_plan(caso, escenario):
     preparado = op_modulo.preparar_operativa(caso, movimientos)
     calendario, compromisos = _calendario(caso, movimientos + preparado["comisiones"])
     operativa = op_modulo.simular_operativa(caso, preparado, calendario) if preparado["activa"] else None
+    calendario_real = {mes: [(movimiento, fecha, importe) for movimiento, fecha, importe in sucesos
+                              if movimiento.get("estados_por_mes", {}).get(mes, movimiento.get("estado", "previsto")) == "pagado"]
+                       for mes, sucesos in calendario.items()}
+    operativa_real = op_modulo.simular_operativa(caso, preparado, calendario_real, solo_pagados=True)
     saldos = {p: _importe(caso["personas"][p]["saldo_inicial_eur"], "EUR", "saldo inicial", negativo=True) for p in PERSONAS}
     iniciales_cuentas = op_modulo.saldos_iniciales_cuentas(caso, preparado)
     for persona in PERSONAS:
         saldos[persona] += iniciales_cuentas[persona]
     iniciales, meses = dict(saldos), []
+    saldo_hogar = sum(saldos.values())
+    saldos_ejecutados, posicion_anterior = dict(saldos), dict(saldos)
     for indice_mes, (mes, sucesos) in enumerate(calendario.items()):
         tipo_cambio = _fx(caso, mes)
         reales, considerados = _cero(), _cero()
@@ -453,7 +672,8 @@ def simular_plan(caso, escenario):
                         "importe_centimos_eur": equivalente, "comun": porcentaje > 0,
                         "porcentaje_compartido": str(porcentaje),
                         "importe_comun_centimos_eur": compartido,
-                        "importe_personal_centimos_eur": equivalente - compartido}
+                        "importe_personal_centimos_eur": equivalente - compartido,
+                        "estado": movimiento.get("estados_por_mes", {}).get(mes, movimiento.get("estado", "previsto"))}
             if movimiento.get("grupo"):
                 registro["grupo"] = movimiento["grupo"]
             if movimiento.get("etiquetas"):
@@ -502,13 +722,37 @@ def simular_plan(caso, escenario):
                 cuotas_eur += equivalente
                 if movimiento["moneda"] == "CLP":
                     cuotas_clp += importe
-        asignacion = _asignacion(escenario, mes, comunes, considerados, personales, descontados)
-        compensacion = {p: externos[p] - personales[p] - asignacion[p] for p in PERSONAS}
-        flujo = {p: reales[p] - externos[p] + compensacion[p] for p in PERSONAS}
-        anteriores = dict(saldos)
+        if escenario["regla"] == "progresivo":
+            presupuesto = _presupuesto(escenario, mes, reales, descontados, comunes)
+            asignacion = presupuesto["contribucion_centimos_eur"]
+        else:
+            asignacion = _asignacion(escenario, mes, comunes, considerados, personales, descontados)
+            presupuesto = _presupuesto(escenario, mes, reales, descontados, comunes, asignacion)
+        _costos_pagos(pagos, comunes, asignacion)
+        ejecucion = _ejecucion(pagos, ingresos, presupuesto)
+        caja_real = operativa_real["meses"][indice_mes]
+        ajuste_real = {p: caja_real["revalorizacion_centimos_eur"][p] + caja_real["redondeo_conversion_centimos_eur"][p] for p in PERSONAS}
+        if saldos_ejecutados is not None and ejecucion["saldo_centimos_eur"] is not None:
+            saldos_ejecutados = {p: saldos_ejecutados[p] + ejecucion["saldo_centimos_eur"][p] + ajuste_real[p] for p in PERSONAS}
+        else:
+            saldos_ejecutados = None
+        posicion_real = caja_real["posicion_real_centimos_eur"]
+        ejecucion.update(posicion_real_centimos_eur=dict(posicion_real),
+                         posicion_reparto_centimos_eur=dict(saldos_ejecutados) if saldos_ejecutados is not None else None,
+                         flujo_caja_centimos_eur={p: posicion_real[p] - posicion_anterior[p] - ajuste_real[p] for p in PERSONAS},
+                         ajuste_cuentas_centimos_eur=ajuste_real,
+                         pagos_fisicos_centimos_eur=dict(caja_real["pagos_atribuidos_centimos_eur"]),
+                         compensacion_pendiente_centimos_eur={p: saldos_ejecutados[p] - posicion_real[p] for p in PERSONAS} if saldos_ejecutados is not None else None)
+        ejecucion["saldo_fisico_centimos_eur"] = dict(ejecucion["flujo_caja_centimos_eur"])
+        posicion_anterior = dict(posicion_real)
+        compensacion = {p: externos[p] - personales[p] - asignacion[p] for p in PERSONAS} if asignacion is not None else None
+        flujo = {p: reales[p] - externos[p] + compensacion[p] for p in PERSONAS} if compensacion is not None else None
+        anteriores = dict(saldos) if saldos is not None else None
         caja = operativa["meses"][indice_mes] if operativa else None
         ajuste = {p: caja["revalorizacion_centimos_eur"][p] + caja["redondeo_conversion_centimos_eur"][p] if caja else 0 for p in PERSONAS}
-        saldos = {p: saldos[p] + flujo[p] + ajuste[p] for p in PERSONAS}
+        saldos = {p: saldos[p] + flujo[p] + ajuste[p] for p in PERSONAS} if saldos is not None and flujo is not None else None
+        flujo_hogar = sum(reales.values()) - sum(externos.values())
+        saldo_hogar += flujo_hogar + sum(ajuste.values())
         fila = {"mes": mes, "clp_por_eur": str(tipo_cambio), "ingresos_reales_centimos_eur": reales,
                 "ingresos_considerados_centimos_eur": considerados, "pagos_personales_centimos_eur": personales,
                 "gastos_descontados_centimos_eur": descontados,
@@ -516,37 +760,44 @@ def simular_plan(caso, escenario):
                 "gastos_comunes_centimos_eur": comunes, "asignacion_comunes_centimos_eur": asignacion,
                 "pagos_externos_centimos_eur": externos, "compensacion_neta_centimos_eur": compensacion,
                 "flujo_libre_centimos_eur": flujo, "saldo_inicial_centimos_eur": anteriores,
-                "saldo_final_centimos_eur": dict(saldos), "clp_comprados": compras,
+                "saldo_final_centimos_eur": dict(saldos) if saldos is not None else None, "clp_comprados": compras,
                 "coste_compra_clp_centimos_eur": costes_compras,
-                "necesita_financiacion": {p: saldos[p] < 0 for p in PERSONAS}, "pagos": pagos, "ingresos": ingresos,
+                "necesita_financiacion": {p: saldos[p] < 0 for p in PERSONAS} if saldos is not None else None, "pagos": pagos, "ingresos": ingresos,
+                "presupuesto": presupuesto, "ejecucion": ejecucion,
                 "cuotas_centimos_eur": cuotas_eur, "cuotas_clp": cuotas_clp,
-                "reparto_equivalente": _reparto_equivalente(escenario, reales, considerados, personales, descontados, comunes, asignacion)}
+                "reparto_equivalente": _reparto_equivalente(escenario, reales, considerados, personales, descontados, comunes, asignacion, presupuesto)}
         if operativa:
             fila["ajuste_cuentas_centimos_eur"] = ajuste
         for tipo in ("universidad", "ayuda", "deuda_fija"):
             seleccion = [p for p in pagos if p.get("origen_tipo") == tipo]
             fila[tipo + "_clp"] = sum(p["importe_original"] for p in seleccion if p["moneda_original"] == "CLP")
             fila[tipo + "_centimos_eur"] = sum(p["importe_centimos_eur"] for p in seleccion)
-        fila["hogar"] = {campo: sum(fila[campo].values()) for campo in (
-            "ingresos_reales_centimos_eur", "pagos_externos_centimos_eur", "flujo_libre_centimos_eur", "saldo_final_centimos_eur")}
+        fila["hogar"] = {"ingresos_reales_centimos_eur": sum(reales.values()),
+                         "pagos_externos_centimos_eur": sum(externos.values()),
+                         "flujo_libre_centimos_eur": flujo_hogar,
+                         "saldo_final_centimos_eur": saldo_hogar}
         meses.append(fila)
     totales = {}
     for campo in ("ingresos_reales_centimos_eur", "ingresos_considerados_centimos_eur", "pagos_personales_centimos_eur",
                   "gastos_descontados_centimos_eur", "gastos_no_descontados_centimos_eur",
                   "asignacion_comunes_centimos_eur", "pagos_externos_centimos_eur", "compensacion_neta_centimos_eur",
                   "flujo_libre_centimos_eur", "clp_comprados", "coste_compra_clp_centimos_eur"):
-        totales[campo] = {p: sum(fila[campo][p] for fila in meses) for p in PERSONAS}
+        totales[campo] = ({p: sum(fila[campo][p] for fila in meses) for p in PERSONAS}
+                          if all(fila[campo] is not None for fila in meses) else None)
     for campo in ("cuotas_clp", "cuotas_centimos_eur", "universidad_clp", "ayuda_clp", "deuda_fija_clp", "gastos_comunes_centimos_eur"):
         totales[campo] = sum(fila[campo] for fila in meses)
-    totales["saldo_inicial_centimos_eur"], totales["saldo_final_centimos_eur"] = iniciales, dict(saldos)
+    totales["saldo_inicial_centimos_eur"], totales["saldo_final_centimos_eur"] = iniciales, dict(saldos) if saldos is not None else None
     if operativa:
         totales["ajuste_cuentas_centimos_eur"] = {p: sum(fila["ajuste_cuentas_centimos_eur"][p] for fila in meses) for p in PERSONAS}
-    totales["hogar"] = {campo: sum(totales[campo].values()) for campo in (
-        "ingresos_reales_centimos_eur", "pagos_externos_centimos_eur", "flujo_libre_centimos_eur", "saldo_inicial_centimos_eur", "saldo_final_centimos_eur")}
+    totales["hogar"] = {"ingresos_reales_centimos_eur": sum(totales["ingresos_reales_centimos_eur"].values()),
+                        "pagos_externos_centimos_eur": sum(totales["pagos_externos_centimos_eur"].values()),
+                        "flujo_libre_centimos_eur": sum(fila["hogar"]["flujo_libre_centimos_eur"] for fila in meses),
+                        "saldo_inicial_centimos_eur": sum(iniciales.values()), "saldo_final_centimos_eur": saldo_hogar}
     resultado = {"version": 2, "es_ficticio": caso["es_ficticio"], "escenario": escenario,
                  "unidad_eur": "centimos_enteros", "inicio": caso["inicio"], "fin": caso["fin"],
                  "conversion": "Equivalencia de cada ingreso y pago CLP en EUR al tipo de su mes, sin comisiones. Compensaciones EUR; no se modelan cuentas CLP separadas.",
-                 "meses": meses, "totales": totales, "compromisos_fuera_horizonte": compromisos}
+                 "meses": meses, "totales": totales, "compromisos_fuera_horizonte": compromisos,
+                 "operativa_real": operativa_real}
     if operativa:
         op_modulo.incorporar_compensaciones(operativa, meses)
         resultado["operativa"] = operativa

@@ -8,6 +8,32 @@
   const pending = new Map();
   let worker = null;
   let sequence = 0;
+  const offlineReady = prepareOffline();
+
+  async function prepareOffline() {
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
+    const serviceWorker = navigator.serviceWorker;
+    await new Promise((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        serviceWorker.removeEventListener("controllerchange", finish);
+        resolve();
+      };
+      const timeout = setTimeout(finish, 4000);
+      Promise.resolve().then(() => serviceWorker.register(new URL("service-worker.js", workerURL), {scope: "./"}))
+        .then(() => serviceWorker.ready)
+        .then(() => {
+          if (finished) return;
+          if (serviceWorker.controller) { finish(); return; }
+          serviceWorker.addEventListener("controllerchange", finish, {once: true});
+          if (serviceWorker.controller) finish();
+        })
+        .catch(finish);
+    });
+  }
 
   function abortError() {
     return new DOMException("Cálculo cancelado", "AbortError");
@@ -59,9 +85,14 @@
         finish();
         reject(new Error("El motor está tardando demasiado. Revisa la conexión y vuelve a intentarlo."));
       }, 90000);
-      try {
-        getWorker().postMessage({id, route, method: options.method || "GET", body: options.body || ""});
-      } catch (error) { finish(); reject(error); }
+      const dispatch = () => {
+        if (!pending.has(id)) return;
+        try {
+          getWorker().postMessage({id, route, method: options.method || "GET", body: options.body || ""});
+        } catch (error) { finish(); reject(error); }
+      };
+      if (typeof navigator === "undefined" || !navigator.serviceWorker) dispatch();
+      else offlineReady.then(dispatch);
     });
   };
 })();

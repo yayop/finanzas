@@ -57,24 +57,27 @@ function createApp(saved = {}) {
     return value;
   }
   document = {querySelector: node, querySelectorAll: (selector) => {
-    if (selector === "[data-tab]") return ["records", "sharing", "projection", "operations"].map((name) => {
+    if (selector === "[data-tab]") return ["dashboard", "records", "sharing", "projection", "operations"].map((name) => {
       const tab = node("#tab-" + name); tab.dataset.tab = name; return tab;
     });
     return [];
-  }, activeElement: null, body: node("body"), createElement: (tag) => node("created-" + tag)};
+  }, activeElement: null, documentElement: {dataset: {}}, body: node("body"), createElement: (tag) => node("created-" + tag)};
   const context = vm.createContext({
     document,
     window: {innerWidth: 1200},
     localStorage: {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value))},
     fetch: (url, options) => fetch(new URL(url, baseURL), options), crypto: webcrypto,
-    AbortController, URL, Blob, console,
+    AbortController, DOMException, URL, Blob, console,
     setTimeout: (callback) => { timers.set(++timerId, callback); return timerId; },
     clearTimeout: (id) => timers.delete(id)
   });
   if (operationSource) vm.runInContext(operationSource, context, {filename: "web/operativa.js"});
   vm.runInContext(readFileSync(path.join(root, "web/equivalencia.js"), "utf8"), context, {filename: "web/equivalencia.js"});
-  vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan, handleAdjustment, setTab, expenseSeries, chartData, exportablePlan};", context, {filename: "web/app.js"});
-  return {...context.app, nodes, storage};
+  for (const filename of ["progresividad.js", "historial.js"]) {
+    vm.runInContext(readFileSync(path.join(root, "web", filename), "utf8"), context, {filename: "web/" + filename});
+  }
+  vm.runInContext(source + "\nglobalThis.app = {state, initialize, preparePlan, requestCalculation, handleControl, handleArrayActions, calculate, importPlan, restoreSavedPlan, handleAdjustment, setTab, expenseSeries, chartData, exportablePlan, setGamma, saveMonth, openMonth, cloneMonth, selectMonth, currentPlanValid, validateHistory};", context, {filename: "web/app.js"});
+  return {...context.app, nodes, storage, document, modules: context.window};
 }
 
 async function fire(app, selector, name = "click") {
@@ -150,8 +153,9 @@ test("cada apertura inicia vacía, con saldos en cero y sin movimientos", async 
   assert.equal(app.state.caso.inicio, current);
   assert.equal(app.state.result.meses.length, 12);
   assert.equal(app.storage.has("finanzas-pareja-plan-v2"), false);
-  assert.equal(app.state.tab, "records");
-  assert.equal(app.nodes.get("#panel-records").hidden, false);
+  assert.equal(app.state.tab, "dashboard");
+  assert.equal(app.nodes.get("#panel-dashboard").hidden, false);
+  assert.equal(app.nodes.get("#panel-records").hidden, true);
   assert.equal(app.nodes.get("#panel-projection").hidden, true);
   assert.match(app.nodes.get("#equivalence-content").innerHTML, /Sin gastos: α′ no está definida/);
 });
@@ -177,8 +181,8 @@ test("Reparto reúne la regla, el mes y la equivalencia conservando el plan al c
   assert.deepEqual(copy(app.exportablePlan()), initialPlan);
   assert.deepEqual(copy(app.state.result), initialRows);
   assert.match(app.nodes.get("#equivalence-content").innerHTML, /α′ de todos los gastos/);
-  app.nodes.get("#sharing-month").value = "2026-12";
-  await fire(app, "#sharing-month", "change");
+  app.nodes.get("#selected-month").value = "2026-12";
+  await fire(app, "#selected-month", "change");
   assert.equal(app.state.selected, "2026-12");
   assert.match(app.nodes.get("#month-detail").innerHTML, /diciembre de 2026/);
   assert.deepEqual(copy(app.exportablePlan()), initialPlan);
@@ -220,7 +224,7 @@ test("Nuevo vacía el plan y la referencia sin borrar el último plan recuperabl
   assert.equal(app.state.filter, "todos");
   assert.equal(app.state.search, "");
   assert.equal(app.state.undoMovement, null);
-  assert.equal(app.state.tab, "records");
+  assert.equal(app.state.tab, "dashboard");
   assert.equal(app.storage.get("finanzas-pareja-plan-v2"), saved);
   assert.ok(app.state.result.meses.every((month) => month.hogar.saldo_final_centimos_eur === 0));
 });
@@ -316,13 +320,13 @@ test("el slider activa y desactiva el descuento al pasar por 100 % sin reemplaza
   Object.defineProperty(list, "innerHTML", {get: () => originalHTML, set: () => { replacements++; }});
   app.handleControl({target: range});
   assert.equal(deduction.disabled, false);
-  assert.match(hint.textContent, /Solo con Tras compromisos/);
+  assert.match(hint.textContent, /antes de calcular γ/);
   assert.equal(app.state.caso.movimientos[2].porcentaje_compartido, "50");
   assert.equal(output.textContent, "50 %");
   range.value = "100";
   app.handleControl({target: range});
   assert.equal(deduction.disabled, true);
-  assert.match(hint.textContent, /Ya se reparte como gasto socializado/);
+  assert.match(hint.textContent, /gastos comunes/);
   assert.equal(app.state.caso.movimientos[2].porcentaje_compartido, "100");
   assert.equal(output.textContent, "100 %");
   assert.equal(deduction.checked, true);
@@ -738,10 +742,10 @@ test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la refere
   await loadExample(app);
   const planBefore = copy({caso: app.state.caso, escenario: app.state.escenario, reference: app.state.reference});
   const resultBefore = copy(app.state.result);
-  for (const tab of ["sharing", "projection", "operations", "records"]) {
+  for (const tab of ["sharing", "projection", "operations", "records", "dashboard"]) {
     app.setTab(tab);
     assert.equal(app.nodes.get("#tab-" + tab)["aria-selected"], "true");
-    for (const panel of ["records", "sharing", "projection", "operations"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
+    for (const panel of ["dashboard", "records", "sharing", "projection", "operations"]) assert.equal(app.nodes.get("#panel-" + panel).hidden, panel !== tab);
   }
   const navigate = (tab, key) => {
     for (const callback of app.nodes.get("#tab-" + tab).listeners.get("keydown")) callback({key, preventDefault() {}});
@@ -750,11 +754,13 @@ test("cambiar de pestaña y perspectiva conserva el plan, los saldos y la refere
   assert.equal(navigate("records", "ArrowRight"), "sharing");
   assert.equal(navigate("sharing", "ArrowRight"), "projection");
   assert.equal(navigate("projection", "ArrowRight"), "operations");
-  assert.equal(navigate("operations", "ArrowRight"), "records");
-  assert.equal(navigate("records", "ArrowLeft"), "operations");
-  assert.equal(navigate("operations", "Home"), "records");
+  assert.equal(navigate("operations", "ArrowRight"), "dashboard");
+  assert.equal(navigate("dashboard", "ArrowRight"), "records");
+  assert.equal(navigate("records", "ArrowLeft"), "dashboard");
+  assert.equal(navigate("dashboard", "ArrowLeft"), "operations");
+  assert.equal(navigate("operations", "Home"), "dashboard");
   assert.equal(navigate("records", "End"), "operations");
-  assert.equal(navigate("operations", "Home"), "records");
+  assert.equal(navigate("operations", "Home"), "dashboard");
   const monthButton = {dataset: {month: "2026-12"}};
   for (const callback of app.nodes.get("#monthly-table").listeners.get("click")) {
     callback({target: {closest: (selector) => selector === "[data-month]" ? monthButton : null}});
@@ -790,4 +796,282 @@ test("exportar e importar conserva la referencia independiente para comparar rep
   assert.deepEqual(copy(restored.state.reference.result.meses), base);
   assert.notDeepEqual(copy(restored.state.result.meses), base);
   assert.equal(JSON.parse(restored.storage.get("finanzas-pareja-plan-v2")).reference.caso.movimientos[shared].reparto, "regla");
+});
+
+function selectExpenseClass(app, index, value) {
+  const select = {dataset: {expenseClass: String(index)}, value, tagName: "SELECT", type: "select-one",
+    closest: (selector) => selector === "[data-expense-class]" ? select : null};
+  for (const callback of app.nodes.get("#adjustments-content").listeners.get("change") || []) callback({target: select});
+}
+
+function paymentState(app, index, value) {
+  const select = {dataset: {paymentState: String(index)}, value, tagName: "SELECT", type: "select-one",
+    closest: (selector) => selector === "[data-payment-state]" ? select : null};
+  for (const callback of app.nodes.get("#controls").listeners.get("change") || []) callback({target: select});
+}
+
+function gammaSlider(app, value) {
+  const slider = {dataset: {gvGamma: "range", gvKey: "range"}, value: String(value), type: "range", checkValidity: () => true,
+    closest: (selector) => selector === "[data-gv-gamma]" ? slider : null};
+  for (const callback of app.nodes.get("#simulator-content").listeners.get("input") || []) callback({target: slider});
+}
+
+function gammaPlan() {
+  const input = plan([...incomes().map((item, index) => ({...item, importe: index === 0 ? "2000.00" : "1000.00"})),
+    movement("obligación", {persona: "ella", pagador: "ella", importe: "100.00", porcentaje_compartido: "0", descontar_antes_reparto: true}),
+    movement("común", {importe: "1200.00", reparto: "regla", descontar_antes_reparto: false})]);
+  input.escenario = {...input.escenario, regla: "progresivo", gamma: "1", gamma_por_mes: {}};
+  return input;
+}
+
+test("el slider γ cambia solo el mes seleccionado y los meses guardados conservan su presupuesto", async () => {
+  const app = createApp();
+  await loadPlan(app, gammaPlan());
+  gammaSlider(app, 0);
+  await app.calculate();
+  assert.equal(app.currentPlanValid(), true);
+  app.saveMonth();
+  assert.equal(app.state.history.length, 1);
+  assert.equal(app.state.history[0].fila.presupuesto.gamma, "0");
+  const savedNovember = copy(app.state.history[0]);
+  app.selectMonth("2026-12");
+  gammaSlider(app, 2);
+  await app.calculate();
+  assert.equal(app.state.escenario.regla, "progresivo");
+  assert.deepEqual(copy(app.state.escenario.gamma_por_mes), {"2026-11": "0", "2026-12": "2"});
+  assert.equal(row(app).presupuesto.gamma, "0");
+  assert.equal(row(app, "2026-12").presupuesto.gamma, "2");
+  assert.equal(row(app, "2027-01").presupuesto.gamma, "1");
+  assert.deepEqual(copy(app.state.history[0]), savedNovember);
+  app.saveMonth();
+  assert.equal(app.state.history.length, 2);
+  const decemberBefore = copy(app.state.history[1]);
+  await app.openMonth("2026-11");
+  assert.equal(app.state.selected, "2026-11");
+  assert.equal(app.state.tab, "records");
+  app.setGamma("0.5");
+  await app.calculate();
+  edit(app, 2, "importe", "125.00");
+  await app.calculate();
+  assert.deepEqual(copy(app.state.history), [savedNovember, decemberBefore]);
+  app.saveMonth();
+  assert.equal(app.state.history[0].fila.presupuesto.gamma, "0.5");
+  assert.equal(app.state.history[0].caso.movimientos[2].importe, "125.00");
+  assert.deepEqual(copy(app.state.history[1]), decemberBefore);
+  assert.equal(JSON.parse(app.storage.get("finanzas-pareja-plan-v2")).historia.length, 2);
+});
+
+test("clonar un mes crea registros previstos y conserva el historial original y su γ", async () => {
+  const app = createApp();
+  const input = gammaPlan();
+  input.caso.movimientos[2].modalidad = "cuotas";
+  input.caso.movimientos[2].importe = "600.00";
+  input.caso.movimientos[2].cuotas = 6;
+  await loadPlan(app, input);
+  app.setGamma("1.75");
+  paymentState(app, 0, "pagado");
+  paymentState(app, 2, "pagado");
+  await app.calculate();
+  app.saveMonth();
+  const original = copy(app.state.history);
+  await app.cloneMonth("2026-11", "2027-02");
+  assert.equal(app.nodes.get("#error").hidden, true, app.nodes.get("#error").textContent);
+  assert.equal(app.state.caso.inicio, "2027-02");
+  assert.equal(app.state.caso.fin, "2027-02");
+  assert.equal(app.state.selected, "2027-02");
+  assert.equal(app.state.escenario.gamma_por_mes["2027-02"], "1.75");
+  assert.ok(app.state.caso.movimientos.every((item) => item.fecha.startsWith("2027-02") && item.modalidad === "unico" && item.estado === "previsto" && Object.keys(item.estados_por_mes).length === 0));
+  const installment = app.state.caso.movimientos.find((item) => item.id === "obligación");
+  assert.equal(installment.importe, "100.00");
+  assert.equal(installment.cuotas, 1);
+  assert.deepEqual(copy(app.state.history), original);
+  assert.deepEqual(copy(app.state.result.meses[0].ejecucion.ingresos_centimos_eur), {el: 0, ella: 0});
+});
+
+test("exportar, importar y recuperar conserva historial y recompone balances desde sus registros", async () => {
+  const original = createApp();
+  await loadPlan(original, gammaPlan());
+  original.setGamma("0.25");
+  await original.calculate();
+  original.saveMonth();
+  original.selectMonth("2026-12");
+  original.setGamma("2.25");
+  await original.calculate();
+  original.saveMonth();
+  await fire(original, "#save-reference");
+  const before = copy(original.exportablePlan());
+  const transferred = copy(before);
+  transferred.historia[0].fila.presupuesto.personal_centimos_eur.el = 99999999;
+  const serialized = JSON.stringify(transferred);
+  const imported = createApp();
+  await imported.initialize();
+  await imported.importPlan({size: serialized.length, text: async () => serialized});
+  assert.equal(imported.state.history.length, 2);
+  assert.deepEqual(copy(imported.state.history), before.historia, "Los balances importados se verifican con el motor a partir del presupuesto de ese mes");
+  assert.deepEqual(copy(imported.state.reference.caso), before.reference.caso);
+  assert.deepEqual(copy(imported.state.result.meses), copy(original.state.result.meses));
+  const restored = createApp(Object.fromEntries(imported.storage));
+  await restored.initialize();
+  assert.deepEqual(copy(restored.state.history), []);
+  await restored.restoreSavedPlan();
+  assert.deepEqual(copy(restored.state.history), before.historia);
+  assert.deepEqual(copy(restored.exportablePlan()), before);
+});
+
+test("una importación o recuperación con historial inválido conserva íntegro el plan activo", async () => {
+  const app = createApp();
+  await loadPlan(app, gammaPlan());
+  app.saveMonth();
+  const active = copy(app.exportablePlan()), result = copy(app.state.result);
+  const saved = app.storage.get("finanzas-pareja-plan-v2");
+  for (const corrupt of [
+    (value) => {value.historia[0].escenario.gamma = "-1";},
+    (value) => {value.historia.push(copy(value.historia[0]));},
+    (value) => {value.historia[0].mes = "2028-01"; value.historia[0].fila.mes = "2028-01";}
+  ]) {
+    const input = copy(active);
+    input.caso.movimientos[0].importe = "9999.00";
+    corrupt(input);
+    const serialized = JSON.stringify(input);
+    await app.importPlan({size: serialized.length, text: async () => serialized});
+    assert.deepEqual(copy(app.exportablePlan()), active);
+    assert.deepEqual(copy(app.state.result), result);
+    assert.equal(app.storage.get("finanzas-pareja-plan-v2"), saved);
+    app.storage.set("finanzas-pareja-plan-v2", serialized);
+    await app.restoreSavedPlan();
+    assert.deepEqual(copy(app.exportablePlan()), active);
+    assert.deepEqual(copy(app.state.result), result);
+    app.storage.set("finanzas-pareja-plan-v2", saved);
+  }
+  let read = false;
+  await app.importPlan({size: 8000001, text: async () => {read = true; return "{}";}});
+  assert.equal(read, false);
+  assert.match(app.nodes.get("#toast").textContent, /8 MB/);
+  assert.deepEqual(copy(app.exportablePlan()), active);
+});
+
+test("el estado pagado de un recurrente afecta solo el mes elegido y aparece en la caja real", async () => {
+  const app = createApp();
+  const accounts = ["el", "ella"].map((person) => ({id: "banco-" + person, nombre: "Cuenta " + person, titular: person, moneda: "EUR", saldo_inicial: "0.00", porcentaje_el: "50"}));
+  const input = plan([...incomes().map((item) => ({...item, cuenta_id: "banco-" + item.persona})),
+    movement("arriendo", {importe: "600.00", reparto: "regla", pagador: "ella", cuenta_id: "banco-ella", descontar_antes_reparto: false})], accounts);
+  input.escenario = {...input.escenario, regla: "progresivo", gamma: "1"};
+  await loadPlan(app, input);
+  for (const index of [0, 1, 2]) paymentState(app, index, "pagado");
+  await app.calculate();
+  assert.deepEqual(copy(row(app).ejecucion.ingresos_centimos_eur), {el: 100000, ella: 100000});
+  assert.deepEqual(copy(row(app).ejecucion.posicion_real_centimos_eur), {el: 100000, ella: 40000});
+  assert.deepEqual(copy(row(app).ejecucion.saldo_centimos_eur), {el: 70000, ella: 70000});
+  assert.deepEqual(copy(row(app).ejecucion.compensacion_pendiente_centimos_eur), {el: -30000, ella: 30000});
+  const december = row(app, "2026-12");
+  assert.deepEqual(copy(december.ejecucion.ingresos_centimos_eur), {el: 0, ella: 0});
+  assert.deepEqual(copy(december.ejecucion.egresos_centimos_eur), {el: 0, ella: 0});
+  assert.deepEqual(copy(december.ejecucion.posicion_real_centimos_eur), {el: 100000, ella: 40000});
+  assert.ok(app.state.caso.movimientos.every((item) => item.estado === "previsto" && item.estados_por_mes["2026-11"] === "pagado" && item.estados_por_mes["2026-12"] === undefined));
+  assert.equal(app.state.result.operativa_real.meses[0].cuentas.find((account) => account.cuenta_id === "banco-ella").saldo_final_unidades, 40000);
+  assert.match(app.nodes.get("#dashboard-content").innerHTML, /Saldo efectivo al cierre/);
+  app.selectMonth("2026-12");
+  paymentState(app, 2, "pagado");
+  await app.calculate();
+  assert.deepEqual(copy(row(app).ejecucion.posicion_real_centimos_eur), {el: 100000, ella: 40000});
+  assert.deepEqual(copy(row(app, "2026-12").ejecucion.posicion_real_centimos_eur), {el: 100000, ella: -20000});
+  assert.deepEqual(copy(row(app, "2027-01").ejecucion.egresos_centimos_eur), {el: 0, ella: 0});
+  const restored = createApp(Object.fromEntries(app.storage));
+  await restored.initialize();
+  await restored.restoreSavedPlan();
+  assert.deepEqual(copy(restored.state.result.operativa_real.meses), copy(app.state.result.operativa_real.meses));
+});
+
+test("clasificar un gasto como socializado, común o personal conserva cuotas, pagador y cuenta", async () => {
+  const app = createApp();
+  const input = gammaPlan();
+  input.caso.cuentas = [{id: "banco-fer", nombre: "Cuenta Fer", titular: "ella", moneda: "EUR", saldo_inicial: "0.00", porcentaje_el: "50"}];
+  Object.assign(input.caso.movimientos[2], {descontar_antes_reparto: false, cuenta_id: "banco-fer", modalidad: "cuotas", importe_tipo: "cuota", cuotas: 3});
+  await loadPlan(app, input);
+  const payment = app.state.caso.movimientos[2];
+  const physical = copy(Object.fromEntries(["pagador", "cuenta_id", "importe", "moneda", "fecha", "modalidad", "cuotas", "importe_tipo"].map((key) => [key, payment[key]])));
+  selectExpenseClass(app, 2, "socializado");
+  await app.calculate();
+  assert.deepEqual(copy(row(app).presupuesto.gastos_socializados_centimos_eur), {el: 0, ella: 10000});
+  assert.equal(row(app).presupuesto.gastos_comunes_centimos_eur, 120000);
+  assert.equal(payment.persona, "ella");
+  assert.equal(payment.descontar_antes_reparto, true);
+  selectExpenseClass(app, 2, "comun");
+  await app.calculate();
+  assert.deepEqual(copy(row(app).presupuesto.gastos_socializados_centimos_eur), {el: 0, ella: 0});
+  assert.equal(row(app).presupuesto.gastos_comunes_centimos_eur, 130000);
+  assert.equal(payment.persona, "compartido");
+  assert.equal(payment.reparto, "regla");
+  selectExpenseClass(app, 2, "personal");
+  await app.calculate();
+  assert.deepEqual(copy(row(app).presupuesto.gastos_socializados_centimos_eur), {el: 0, ella: 0});
+  assert.equal(row(app).presupuesto.gastos_comunes_centimos_eur, 120000);
+  assert.equal(payment.persona, "ella");
+  assert.equal(payment.descontar_antes_reparto, false);
+  assert.deepEqual(copy(Object.fromEntries(Object.keys(physical).map((key) => [key, payment[key]]))), physical);
+  assert.equal(row(app).hogar.pagos_externos_centimos_eur, 130000);
+  assert.equal(row(app).pagos.filter((item) => item.id === payment.id).length, 1);
+});
+
+test("un déficit deja los repartos pendientes y permite recorrer los meses posteriores sin inventar saldos", async () => {
+  const input = plan([
+    movement("ingreso-a", {tipo: "ingreso", persona: "el", importe: "2000.00", fecha: "2026-12-01"}),
+    movement("ingreso-b", {tipo: "ingreso", persona: "ella", pagador: "ella", importe: "1000.00", fecha: "2026-12-01"}),
+    movement("comun", {importe: "1200.00", reparto: "regla"})
+  ]);
+  input.escenario = {...input.escenario, regla: "progresivo", gamma: "1"};
+  const app = createApp();
+  await loadPlan(app, input);
+  assert.equal(row(app).presupuesto.estado, "deficit");
+  assert.equal(row(app).asignacion_comunes_centimos_eur, null);
+  assert.match(app.nodes.get("#dashboard-content").innerHTML, /Déficit presupuestario/);
+  for (const tab of ["dashboard", "records", "sharing", "projection", "operations"]) app.setTab(tab);
+  app.selectMonth("2026-12");
+  assert.equal(row(app, "2026-12").presupuesto.estado, "calculado");
+  assert.equal(row(app, "2026-12").saldo_final_centimos_eur, null);
+  for (const tab of ["dashboard", "records", "sharing", "projection", "operations"]) app.setTab(tab);
+  assert.equal(app.nodes.get("#error").hidden, true);
+  assert.doesNotMatch(app.nodes.get("#chart").innerHTML, /NaN|Infinity/);
+  assert.doesNotMatch(app.nodes.get("#operations-content").innerHTML, /NaN|Infinity/);
+});
+
+test("personalizar un gasto conserva el desplegable abierto y el foco del destino al recalcular", async () => {
+  const app = createApp();
+  await loadPlan(app, plan([...incomes(), movement("gasto", {persona: "el", porcentaje_compartido: "0", reparto: "regla", descontar_antes_reparto: false})]));
+  const original = app.document.querySelectorAll;
+  const outer = {dataset: {socializationId: "gasto"}};
+  app.document.querySelectorAll = (selector) => selector === ".adjustment-card[open]" ? [outer]
+    : selector === ".socialization-advanced[open]" ? [{closest: () => outer}] : original(selector);
+  const select = app.nodes.get("#adjustments-content").querySelector('[data-expense-class="2"]');
+  select.dataset = {expenseClass: "2"};
+  select.value = "socializado_ella";
+  select.tagName = "SELECT";
+  select.closest = (selector) => selector === "[data-expense-class]" ? select : null;
+  select.focus();
+  app.handleControl({target: select});
+  await app.calculate();
+  assert.match(app.nodes.get("#adjustments-content").innerHTML, /class="socialization-advanced" open/);
+  assert.equal(app.document.activeElement, select);
+  assert.equal(app.state.caso.movimientos[2].persona, "ella");
+  assert.equal(app.state.caso.movimientos[2].descontar_antes_reparto, true);
+});
+
+test("marcar una transferencia realizada mueve la caja del mes sin añadir un gasto", async () => {
+  const accounts = [
+    {id: "cuenta-a", nombre: "Cuenta A", titular: "el", moneda: "EUR", saldo_inicial: "0.00"},
+    {id: "cuenta-b", nombre: "Cuenta B", titular: "ella", moneda: "EUR", saldo_inicial: "0.00"}
+  ];
+  const input = plan(incomes().map((income, index) => ({...income, cuenta_id: accounts[index].id, estados_por_mes: {"2026-11": "pagado"}})), accounts);
+  input.caso.transferencias = [{id: "transferencia", concepto: "Ajuste", origen: "cuenta-a", destino: "cuenta-b", importe: "200.00", fecha: "2026-11-01", modalidad: "recurrente", intervalo_meses: 1, hasta: ""}];
+  const app = createApp();
+  await loadPlan(app, input);
+  assert.deepEqual(copy(row(app).ejecucion.posicion_real_centimos_eur), {el: 100000, ella: 100000});
+  const inputNode = {dataset: {opTransferState: "0"}, value: "pagado", tagName: "SELECT", matches: () => false};
+  inputNode.closest = (selector) => selector === "[data-op-transfer-state]" ? inputNode : null;
+  for (const callback of app.nodes.get("#operations-content").listeners.get("change") || []) callback({target: inputNode});
+  await app.calculate();
+  assert.deepEqual(copy(row(app).ejecucion.posicion_real_centimos_eur), {el: 80000, ella: 120000});
+  assert.deepEqual(copy(row(app).ejecucion.egresos_centimos_eur), {el: 0, ella: 0});
+  assert.equal(app.state.caso.transferencias[0].estados_por_mes["2026-11"], "pagado");
+  assert.equal(app.state.caso.transferencias[0].estados_por_mes["2026-12"], undefined);
 });
