@@ -6,11 +6,13 @@
     <meta name="theme-color" content="#f7f8f7">
     <meta name="description" content="Simulador de ingresos y gastos, incluidos pagos en cuotas.">
     <title>Finanzas</title>
-    <link rel="stylesheet" href="styles.css?v=81ecdda3cf1b">
-    <script src="operativa.js?v=81ecdda3cf1b" defer></script>
-    <script src="equivalencia.js?v=81ecdda3cf1b" defer></script>
-    <script src="browser-model.js?v=81ecdda3cf1b" defer></script>
-    <script src="app.js?v=81ecdda3cf1b" defer></script>
+    <link rel="stylesheet" href="styles.css?v=91273568d127">
+    <script src="operativa.js?v=91273568d127" defer></script>
+    <script src="equivalencia.js?v=91273568d127" defer></script>
+    <script src="progresividad.js?v=91273568d127" defer></script>
+    <script src="historial.js?v=91273568d127" defer></script>
+    <script src="browser-model.js?v=91273568d127" defer></script>
+    <script src="app.js?v=91273568d127" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#plan">Ir al simulador</a>
@@ -22,32 +24,35 @@
           <input class="visually-hidden" type="file" id="import-file" accept="application/json,.json">
           <button class="button ghost small" id="download" type="button">Exportar</button>
           <button class="button ghost small" id="restore-plan" type="button" hidden>Recuperar</button>
+          <button class="button ghost small" id="theme-toggle" type="button" aria-label="Cambiar a modo oscuro">Oscuro</button>
           <button class="button ghost small" id="reset" type="button">Vaciar</button>
         </div>
       </header>
       <div class="error-banner" id="error" role="alert" hidden></div>
-      <nav class="workspace-tabs" role="tablist" aria-label="Vistas del plan">
-        <button type="button" id="tab-records" role="tab" data-tab="records" aria-controls="panel-records" aria-selected="true">Registros</button>
-        <button type="button" id="tab-sharing" role="tab" data-tab="sharing" aria-controls="panel-sharing" aria-selected="false" tabindex="-1">Reparto</button>
-        <button type="button" id="tab-projection" role="tab" data-tab="projection" aria-controls="panel-projection" aria-selected="false" tabindex="-1">Proyección</button>
+      <div class="workspace-heading"><nav class="workspace-tabs" role="tablist" aria-label="Vistas del plan">
+        <button type="button" id="tab-dashboard" role="tab" data-tab="dashboard" aria-controls="panel-dashboard" aria-selected="true">Dashboard</button>
+        <button type="button" id="tab-records" role="tab" data-tab="records" aria-controls="panel-records" aria-selected="false" tabindex="-1">Presupuesto</button>
+        <button type="button" id="tab-sharing" role="tab" data-tab="sharing" aria-controls="panel-sharing" aria-selected="false" tabindex="-1">Simulador</button>
+        <button type="button" id="tab-projection" role="tab" data-tab="projection" aria-controls="panel-projection" aria-selected="false" tabindex="-1">Historial</button>
         <button type="button" id="tab-operations" role="tab" data-tab="operations" aria-controls="panel-operations" aria-selected="false" tabindex="-1">Operativa</button>
-      </nav>
-      <section id="panel-records" class="tab-panel records-layout" role="tabpanel" aria-labelledby="tab-records">
+      </nav><label class="month-select-label" for="selected-month"><span class="visually-hidden">Mes</span><select id="selected-month" class="select-control" aria-label="Mes"><option>Cargando…</option></select></label></div>
+      <section id="panel-dashboard" class="tab-panel" role="tabpanel" aria-labelledby="tab-dashboard"><div id="dashboard-content"></div></section>
+      <section id="panel-records" class="tab-panel records-layout" role="tabpanel" aria-labelledby="tab-records" hidden>
         <aside class="controls-panel" aria-labelledby="controls-title">
           <div class="panel-heading"><h2 id="controls-title">Ingresos y gastos</h2><span id="status" role="status" aria-live="polite">Cargando…</span></div>
           <form id="controls" autocomplete="off"><div class="loading controls-loading" aria-label="Cargando"><span></span><span></span><span></span></div></form>
         </aside>
       </section>
       <section id="panel-sharing" class="tab-panel sharing-layout" role="tabpanel" aria-labelledby="tab-sharing" hidden>
-        <div class="sharing-toolbar"><h2>Reparto</h2><label class="month-select-label" for="sharing-month"><span>Mes</span><select id="sharing-month" class="select-control" aria-label="Mes del reparto"><option>Cargando…</option></select></label></div>
+        <div id="simulator-content"></div>
         <form id="sharing-controls" class="card sharing-controls" autocomplete="off"></form>
-        <div id="adjustments-content"></div>
-        <div id="equivalence-content"></div>
-        <section class="card" id="agreement" aria-labelledby="agreement-title"><div class="card-heading"><h2 id="agreement-title">Detalle del mes</h2></div><div id="month-detail"></div></section>
+        <details class="card budget-allocation" open><summary class="card-summary"><h2>Gastos del presupuesto</h2></summary><div id="adjustments-content"></div></details>
+        <details class="card"><summary class="card-summary"><h2>Tasa equivalente</h2></summary><div id="equivalence-content"></div></details>
+        <details class="card" id="agreement"><summary class="card-summary"><h2 id="agreement-title">Detalle del cálculo</h2></summary><div id="month-detail"></div></details>
       </section>
       <section id="panel-projection" class="tab-panel projection-layout" role="tabpanel" aria-labelledby="tab-projection" hidden>
-        <div class="results-column">
-          <div class="results-heading"><h2>Resumen</h2><label class="month-select-label" for="selected-month"><span class="visually-hidden">Mes</span><select id="selected-month" class="select-control" aria-label="Mes"><option>Cargando…</option></select></label></div>
+        <div id="history-content"></div><details class="card forecast-section" open><summary class="card-summary"><h2>Proyección del plan</h2></summary><div class="results-column">
+
           <div id="kpis" class="kpis" aria-live="polite"><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div><div class="stat-card loading"><span></span></div></div>
           <section class="card chart-card" aria-labelledby="chart-title">
             <div class="card-heading chart-heading"><div><h2 id="chart-title">Proyección</h2><p id="period-label"></p></div><div class="chart-controls"><label class="chart-view-label" for="chart-view"><span class="visually-hidden">Perspectiva del gráfico</span><select id="chart-view" aria-label="Perspectiva del gráfico"><option value="personas">Personas</option><option value="grupos">Grupos</option><option value="etiquetas">Etiquetas</option></select></label><div class="segmented" role="group" aria-label="Valor del gráfico"><button type="button" id="metric-flujo" aria-pressed="true">Flujo</button><button type="button" id="metric-saldo" aria-pressed="false">Saldo</button></div></div></div>
@@ -64,7 +69,7 @@
           </details>
           <section class="card monthly-card" id="monthly" aria-labelledby="monthly-title"><div class="card-heading"><h2 id="monthly-title">Meses</h2><span class="muted">EUR</span></div><div class="table-wrap"><table id="monthly-table"><caption class="visually-hidden">Proyección mensual</caption><tbody><tr><td class="empty-state">Cargando…</td></tr></tbody></table></div></section>
           <section class="card" id="future" aria-labelledby="future-title"><div class="card-heading"><h2 id="future-title">Pagos fuera del período</h2></div><div id="commitments"></div></section>
-        </div>
+        </div></details>
       </section>
       <section id="panel-operations" class="tab-panel" role="tabpanel" aria-labelledby="tab-operations" hidden>
         <div id="operations-content" class="operations-layout"></div>

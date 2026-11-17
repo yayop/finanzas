@@ -5,18 +5,19 @@ const apiFetch = (...args) => window.finanzasApi ? window.finanzasApi(...args) :
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const eur = (cents, decimals = null) => {
+  if (cents === null || cents === undefined || !Number.isFinite(cents)) return "—";
   const digits = decimals ?? (cents % 100 === 0 ? 0 : 2);
   return new Intl.NumberFormat("es-ES", {style: "currency", currency: "EUR", minimumFractionDigits: digits, maximumFractionDigits: digits}).format(cents / 100);
 };
 const clp = (pesos) => new Intl.NumberFormat("es-CL", {maximumFractionDigits: 0}).format(pesos) + " CLP";
 const monthLabel = (month, short = false) => new Intl.DateTimeFormat("es-CL", {month: short ? "short" : "long", year: "numeric", timeZone: "UTC"}).format(new Date(month + "-01T12:00:00Z"));
-const RULES = {mitades: "50/50", proporcional: "Según ingresos", proporcional_disponible: "Tras compromisos", igualar: "Igualar margen", manual: "Porcentaje fijo"};
-const TABS = ["records", "sharing", "projection", "operations"];
+const RULES = {progresivo: "Progresividad γ", mitades: "50/50", proporcional: "Según ingresos", proporcional_disponible: "Tras compromisos", igualar: "Igualar margen", manual: "Porcentaje fijo"};
+const TABS = ["dashboard", "records", "sharing", "projection", "operations"];
 const TYPES = {ingreso: "Ingreso", gasto: "Gasto"};
 const DEFAULT_NAMES = {el: "Yayo", ella: "Fer"};
 const STORAGE_KEY = "finanzas-pareja-plan-v2";
 const LEGACY_STORAGE_KEY = "finanzas-pareja-plan-v1";
-const state = {caso: null, escenario: null, initial: null, result: null, reference: null, selected: null, metric: "flujo", chartView: "personas", hiddenSeries: new Set(), tab: "records", edited: false, saveEnabled: false, sequence: 0, importSequence: 0, controller: null, timer: null, filter: "todos", search: "", activeMovement: null, undoMovement: null};
+const state = {caso: null, escenario: null, initial: null, result: null, reference: null, history: [], selected: null, metric: "flujo", chartView: "personas", hiddenSeries: new Set(), tab: "dashboard", edited: false, saveEnabled: false, sequence: 0, importSequence: 0, controller: null, timer: null, filter: "todos", search: "", activeMovement: null, undoMovement: null};
 const dateLabel = (date) => date && !Number.isNaN(new Date(date + "T12:00:00Z").getTime()) ? new Intl.DateTimeFormat("es-CL", {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"}).format(new Date(date + "T12:00:00Z")) : "fecha por definir";
 const originalMoney = (amount, currency) => currency === "CLP" ? clp(Number(amount)) : eur(Math.round(Number(amount) * 100));
 
@@ -89,6 +90,8 @@ function normalize(data) {
     movement.cuotas_pagadas ??= 0;
     movement.importe_tipo ??= "total";
     movement.extra ??= false;
+    movement.estado ??= "previsto";
+    movement.estados_por_mes ??= {};
     movement.porcentaje_compartido ??= "0";
     if (movement.tipo === "deuda") movement.tipo = "gasto";
     if (movement.tipo === "gasto" && !Object.hasOwn(movement, "descontar_antes_reparto")) movement.descontar_antes_reparto = true;
@@ -102,6 +105,8 @@ function normalize(data) {
   caso.transferencias ??= [];
   window.FinanzasOperativa?.normalize(caso);
   escenario.porcentaje_el ??= "50";
+  escenario.gamma ??= "1";
+  escenario.gamma_por_mes ??= {};
   return {caso, escenario};
 }
 
@@ -114,7 +119,7 @@ function emptyPlan() {
     clp_por_eur: "1000",
     personas: Object.fromEntries(["el", "ella"].map((person) => [person, {nombre: DEFAULT_NAMES[person], saldo_inicial_eur: "0.00"}])),
     movimientos: [], cuentas: [], transferencias: []
-  }, escenario: {id: "nuevo", nombre: "50/50", regla: "mitades", incluir_extra: true, porcentaje_el: "50"}};
+  }, escenario: {id: "nuevo", nombre: "Progresividad γ", regla: "progresivo", gamma: "1", gamma_por_mes: {}, incluir_extra: true, porcentaje_el: "50"}};
 }
 
 function savedPlan() {
@@ -155,10 +160,10 @@ function renderControls(preserve = false) {
 
 function renderSharingControls() {
   const e = state.escenario;
-  $("#sharing-controls").innerHTML = selectField("escenario.regla", "Regla general", e.regla, Object.entries(RULES), true)
+  $("#sharing-controls").innerHTML = `<details class="legacy-rules" ${e.regla !== "progresivo" ? "open" : ""}><summary>Otros criterios${e.regla !== "progresivo" ? ` · ${escapeHtml(RULES[e.regla])}` : ""}</summary><div class="field-grid">` + selectField("escenario.regla", "Criterio", e.regla, Object.entries(RULES), true)
     + `<div id="manual-field" ${e.regla === "manual" ? "" : "hidden"}>${field("escenario.porcentaje_el", "Parte de " + personName("el"), {value: e.porcentaje_el, suffix: "%", max: 100, step: "any", disabled: e.regla !== "manual"})}</div>`
-    + toggle("escenario.incluir_extra", "Incluir extras en el reparto", e.incluir_extra)
-    + `<span id="rule-help" hidden></span>`;
+    + toggle("escenario.incluir_extra", "Incluir extras en otros criterios", e.incluir_extra, "γ considera todos los ingresos.")
+    + `</div></details><span id="rule-help" hidden></span>`;
 }
 
 function movementSchedule(movement) {
@@ -175,7 +180,7 @@ function movementResponsibility(movement) {
 
 function deductionSettings(movement) {
   const disabled = movement.persona === "compartido" ? movement.reparto !== "fijo" : Number(movement.porcentaje_compartido) === 100;
-  return {disabled, hint: disabled ? "Ya se reparte como gasto socializado." : "Solo con Tras compromisos; sobre la parte asignada a cada persona."};
+  return {disabled, hint: disabled ? "Se incluye en los gastos comunes." : "Obligación reconocida antes de calcular γ o Tras compromisos."};
 }
 
 function movementCard(movement, i, open) {
@@ -185,13 +190,15 @@ function movementCard(movement, i, open) {
   const amountLabel = installments ? movement.importe_tipo === "cuota" ? "Cada cuota" : "Total original" : "Importe";
   const dateTitle = installments ? "Próxima cuota" : recurring ? "Desde" : "Fecha";
   const options = [["unico", "Una vez"], ["recurrente", "Recurrente"], ...(!income ? [["cuotas", "Cuotas"]] : [])];
+  const month = state.selected || state.caso.inicio;
+  const paymentState = movement.estados_por_mes?.[month] || movement.estado || "previsto";
   const fields = [
     field(`${path}.concepto`, "Concepto", {type: "text", value: movement.concepto, wide: true}),
     selectField(`${path}.tipo`, "Tipo", movement.tipo, Object.entries(TYPES)),
     income ? selectField(`${path}.persona`, "Recibe", movement.persona, peopleOptions()) : "",
     field(`${path}.importe`, amountLabel, {value: movement.importe, suffix: movement.moneda === "CLP" ? "CLP" : "€", step: movement.moneda === "CLP" ? "1" : "0.01"}),
     selectField(`${path}.moneda`, "Moneda", movement.moneda, [["EUR", "EUR"], ["CLP", "CLP"]]),
-    !income ? selectField(`${path}.pagador`, "Pagado por", movement.pagador, peopleOptions(), true) : "",
+    !income ? selectField(`${path}.pagador`, "Paga", movement.pagador, peopleOptions(), true) : "",
     selectField(`${path}.cuenta_id`, income ? "Cuenta de ingreso" : "Cuenta de pago", movement.cuenta_id || "", [["", "Sin asignar"], ...(state.caso.cuentas || []).filter((account) => account.moneda === movement.moneda).map((account) => [account.id, account.nombre])], true),
     selectField(`${path}.modalidad`, "Frecuencia", movement.modalidad, options, true),
     installments ? selectField(`${path}.importe_tipo`, "Importe", movement.importe_tipo, [["total", "Total a dividir"], ["cuota", "Cada cuota"]], true) : "",
@@ -202,8 +209,9 @@ function movementCard(movement, i, open) {
     !income ? field(`${path}.grupo`, "Grupo", {type: "text", value: movement.grupo || "", maxLength: 80, required: false, wide: true, list: "expense-groups"}) + field(`${path}.etiquetas`, "Etiquetas (separadas por coma)", {type: "text", kind: "csv", value: (movement.etiquetas || []).join(", "), required: false, wide: true}) : ""
   ].join("");
   const extra = income ? toggle(`${path}.extra`, "Ingreso extra", movement.extra) : "";
+  const execution = `<div class="field payment-state"><label for="payment-state-${i}">Estado en ${escapeHtml(monthLabel(month))}</label><select id="payment-state-${i}" data-payment-state="${i}"><option value="previsto" ${paymentState === "previsto" ? "selected" : ""}>Previsto</option><option value="pagado" ${paymentState === "pagado" ? "selected" : ""}>${income ? "Recibido" : "Pagado"}</option></select></div>`;
   const owner = income ? personName(movement.persona) : `Pagado por ${personName(movement.pagador)}`;
-  return `<details class="movement-card" data-movement-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="movement-summary"><span class="movement-summary-copy"><strong data-summary-concept>${escapeHtml(movement.concepto || "Sin concepto")}</strong><small data-summary-schedule>${escapeHtml(owner)} · ${escapeHtml(movementSchedule(movement))}</small></span><span class="movement-amount" data-summary-amount>${escapeHtml(originalMoney(movement.importe, movement.moneda))}</span><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="movement-editor"><div class="movement-actions"><button type="button" class="button ghost small" data-duplicate-movement="${i}">Duplicar</button><button type="button" class="button ghost small" data-remove-movement="${i}">Eliminar</button></div><div class="field-grid">${fields}</div>${!income ? toggle(`${path}.marcar_grafico`, "Marcar en gráfico", movement.marcar_grafico) : ""}${extra}</div></details>`;
+  return `<details class="movement-card" data-movement-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="movement-summary"><span class="movement-summary-copy"><strong data-summary-concept>${escapeHtml(movement.concepto || "Sin concepto")}</strong><small data-summary-schedule>${escapeHtml(owner)} · ${escapeHtml(movementSchedule(movement))}</small></span><span class="movement-amount" data-summary-amount>${escapeHtml(originalMoney(movement.importe, movement.moneda))}</span><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="movement-editor"><div class="movement-actions"><button type="button" class="button ghost small" data-duplicate-movement="${i}">Duplicar</button><button type="button" class="button ghost small" data-remove-movement="${i}">Eliminar</button></div><div class="field-grid">${fields}</div>${execution}${!income ? toggle(`${path}.marcar_grafico`, "Marcar en gráfico", movement.marcar_grafico) : ""}${extra}</div></details>`;
 }
 
 function renderMovementList(preserve = false) {
@@ -243,7 +251,7 @@ function markEdited() {
 }
 
 function exportablePlan() {
-  return {version: 2, caso: state.caso, escenario: state.escenario, reference: state.reference && {caso: state.reference.caso, escenario: state.reference.escenario}};
+  return {version: 2, caso: state.caso, escenario: state.escenario, historia: state.history, reference: state.reference && {caso: state.reference.caso, escenario: state.reference.escenario}};
 }
 
 function persist() {
@@ -251,7 +259,11 @@ function persist() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(exportablePlan()));
     $("#restore-plan").hidden = false;
-  } catch { /* El cálculo sigue disponible aunque no haya almacenamiento local. */ }
+    return true;
+  } catch {
+    toast("No se pudo guardar en este navegador. Exporta el plan para conservarlo.");
+    return false;
+  }
 }
 
 function showError(message) {
@@ -287,7 +299,7 @@ function scheduleCalculation() {
 async function calculate() {
   const sequence = ++state.sequence;
   state.controller?.abort();
-  if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || $("#socialization-controls")?.checkValidity() === false || window.FinanzasOperativa?.checkValidity() === false) {
+  if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || $("#socialization-controls")?.checkValidity() === false || window.FinanzasProgresividad?.checkValidity() === false || window.FinanzasOperativa?.checkValidity() === false) {
     document.body.classList.remove("calculating");
     showError("Revisa los campos.");
     return;
@@ -314,6 +326,7 @@ async function calculate() {
 
 function operativaContext() {
   return {state, escapeHtml, eur, originalMoney, personName, selectMonth, monthLabel, RULES,
+    setGamma, saveMonth, openMonth, cloneMonth, exportCsv,
     changed: ({rerender = false} = {}) => {
       markEdited();
       if (rerender) renderControls(true);
@@ -322,12 +335,10 @@ function operativaContext() {
 }
 
 function renderAuxiliary() {
-  if (state.caso) {
-    const rows = state.result?.meses || [{mes: state.caso.inicio}];
-    $("#sharing-month").innerHTML = rows.map((row) => `<option value="${row.mes}" ${row.mes === state.selected ? "selected" : ""}>${monthLabel(row.mes)}</option>`).join("");
-  }
   window.FinanzasOperativa?.render(operativaContext());
   window.FinanzasEquivalencia?.render(operativaContext());
+  window.FinanzasProgresividad?.render(operativaContext());
+  window.FinanzasHistorial?.render(operativaContext());
   renderAdjustments();
 }
 
@@ -347,21 +358,38 @@ function setTab(tab) {
 function adjustmentPercent(movement) {
   if (movement.reparto === "fijo") return Number(movement.porcentaje_el);
   const row = state.result && selectedRow();
-  const ratio = row?.gastos_comunes_centimos_eur ? 100 * row.asignacion_comunes_centimos_eur.el / row.gastos_comunes_centimos_eur : 50;
+  const ratio = row?.gastos_comunes_centimos_eur && row.asignacion_comunes_centimos_eur ? 100 * row.asignacion_comunes_centimos_eur.el / row.gastos_comunes_centimos_eur : 50;
   return Math.min(100, Math.max(0, Math.round(ratio * 10) / 10));
 }
 
 function socializationState(movement) {
   if (movement.persona === "compartido") return movement.reparto === "fijo" ? `Socializado · ${movementResponsibility(movement)}` : "Socializado · Regla general";
   const percent = Number(movement.porcentaje_compartido);
-  return personName(movement.persona) + (percent ? ` · Socializado ${percent}%` : "");
+  return personName(movement.persona) + (percent ? ` · Socializado ${percent}%` : movement.descontar_antes_reparto ? " · Obligación socializada" : " · Personal");
 }
 
-function socializationCard(movement, index, row, open) {
+function expenseClass(movement) {
+  if (movement.persona === "compartido" && movement.reparto !== "fijo") return "comun";
+  if (movement.persona === "compartido" || Number(movement.porcentaje_compartido)) return "personalizado";
+  return movement.descontar_antes_reparto ? "socializado" : "personal";
+}
+
+function expenseCategories(movement) {
+  return [["comun", "Común · se reparte entre ambos"],
+    ...["el", "ella"].map((person) => ["socializado_" + person, "Socializado · " + personName(person)]),
+    ...["el", "ella"].map((person) => ["personal_" + person, "Personal · " + personName(person)]),
+    ...(expenseClass(movement) === "personalizado" ? [["personalizado", "Reparto personalizado"]] : [])];
+}
+
+function socializationCard(movement, index, row, open, advancedOpen = false) {
   const path = `caso.movimientos.${index}`, shared = movement.persona === "compartido";
   const percent = shared ? adjustmentPercent(movement) : Number(movement.porcentaje_compartido);
   const payment = row?.pagos.find((item) => item.id === movement.id);
   const fixed = movement.reparto === "fijo";
+  const category = expenseClass(movement);
+  const selectedClass = category === "personal" || category === "socializado" ? category + "_" + movement.persona : category;
+  const categories = expenseCategories(movement);
+  const categoryField = `<div class="field"><label for="expense-class-${index}">Destino del gasto</label><select id="expense-class-${index}" data-expense-class="${index}">${categories.map(([key, label]) => `<option value="${key}" ${selectedClass === key ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>`;
   let controls = `<div class="field-grid">${selectField(`${path}.persona`, "Responsabilidad", movement.persona, peopleOptions(true), true)}`;
   if (shared) controls += selectField(`${path}.reparto`, "Reparto", movement.reparto || "regla", [["regla", "Regla general"], ["fijo", "Porcentaje fijo"]], true);
   controls += "</div>";
@@ -372,7 +400,7 @@ function socializationCard(movement, index, row, open) {
   }
   const settings = deductionSettings(movement);
   controls += toggle(`${path}.descontar_antes_reparto`, "Descontar antes de repartir", movement.descontar_antes_reparto, settings.hint, settings.disabled);
-  return `<details class="adjustment-card" data-socialization-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="socialization-summary"><strong>${escapeHtml(movement.concepto)}</strong><span class="adjustment-amount">${payment ? eur(payment.importe_centimos_eur) : "Sin pago este mes"}</span><small class="socialization-state">${escapeHtml(socializationState(movement))}</small><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="socialization-editor">${controls}</div></details>`;
+  return `<details class="adjustment-card" data-socialization-id="${escapeHtml(movement.id)}" ${open ? "open" : ""}><summary class="socialization-summary"><strong>${escapeHtml(movement.concepto)}</strong><span class="adjustment-amount">${payment ? eur(payment.importe_centimos_eur) : "Sin pago este mes"}</span><small class="socialization-state">${escapeHtml(socializationState(movement))}</small><span class="movement-chevron" aria-hidden="true">⌄</span></summary><div class="socialization-editor">${categoryField}<details class="socialization-advanced" ${advancedOpen ? "open" : ""}><summary>Personalizar reparto</summary>${controls}</details></div></details>`;
 }
 
 function renderAdjustments() {
@@ -382,13 +410,16 @@ function renderAdjustments() {
   const focusPath = ownsFocus ? active.dataset?.path : null;
   const focusId = ownsFocus && active.dataset?.adjustIndex !== undefined ? active.id : null;
   const focusShare = ownsFocus ? active.dataset?.shareToggle : undefined;
+  const focusCategory = ownsFocus ? active.dataset?.expenseClass : undefined;
   const open = new Set([...document.querySelectorAll(".adjustment-card[open]")].map((card) => card.dataset.socializationId));
+  const advanced = new Set([...document.querySelectorAll(".socialization-advanced[open]")].map((details) => details.closest(".adjustment-card").dataset.socializationId));
   const row = state.result && selectedRow();
   const movements = state.caso.movimientos.map((movement, index) => ({movement, index})).filter(({movement}) => movement.tipo !== "ingreso");
-  element.innerHTML = `<div class="adjustment-summary adjustments-toolbar"><h2>Socialización de gastos</h2></div><form id="socialization-controls" autocomplete="off"><div class="adjustment-list">${movements.map(({movement, index}) => socializationCard(movement, index, row, open.has(movement.id))).join("") || '<p class="empty-state">Sin gastos.</p>'}</div></form>${state.escenario.regla === "igualar" && movements.length ? '<p class="hint">Igualar margen puede compensar estos cambios con otros aportes.</p>' : ""}`;
+  element.innerHTML = `<form id="socialization-controls" autocomplete="off"><div class="adjustment-list">${movements.map(({movement, index}) => socializationCard(movement, index, row, open.has(movement.id), advanced.has(movement.id))).join("") || '<p class="empty-state">Añade gastos en Presupuesto.</p>'}</div></form>${state.escenario.regla === "igualar" && movements.length ? '<p class="hint">Igualar margen puede compensar estos cambios con otros aportes.</p>' : ""}`;
   if (focusPath) element.querySelector(`[data-path="${focusPath}"]`)?.focus({preventScroll: true});
   else if (focusId) document.getElementById?.(focusId)?.focus({preventScroll: true});
   else if (focusShare !== undefined) element.querySelector(`[data-share-toggle="${focusShare}"]`)?.focus({preventScroll: true});
+  else if (focusCategory !== undefined) element.querySelector(`[data-expense-class="${focusCategory}"]`)?.focus({preventScroll: true});
 }
 
 function updateSocializationCard(card, movement, index) {
@@ -401,6 +432,12 @@ function updateSocializationCard(card, movement, index) {
   setText("[data-adjust-left]", shared ? `${personName("el")}${fixed ? ` ${percent}%` : ""}` : `Personal ${100 - percent}%`);
   setText("[data-adjust-right]", shared ? `${personName("ella")}${fixed ? ` ${Math.round((100 - percent) * 10000) / 10000}%` : ""}` : `Socializado ${percent}%`);
   setText("[data-adjust-mode]", fixed ? "Fijo" : "Regla general");
+  const categorySelect = card.querySelector("[data-expense-class]");
+  if (categorySelect) {
+    categorySelect.innerHTML = expenseCategories(movement).map(([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`).join("");
+    const category = expenseClass(movement);
+    categorySelect.value = category === "personal" || category === "socializado" ? category + "_" + movement.persona : category;
+  }
   const reset = card.querySelector("[data-adjust-reset]");
   if (reset) reset.hidden = !shared || !fixed;
   const mode = card.querySelector(`[data-path="caso.movimientos.${index}.reparto"]`);
@@ -461,7 +498,7 @@ function expenseSeries(view = state.chartView) {
 function chartData() {
   if (state.chartView !== "personas") return expenseSeries();
   const field = state.metric === "saldo" ? "saldo_final_centimos_eur" : "flujo_libre_centimos_eur";
-  return ["el", "ella"].map((person, index) => ({id: person, label: personName(person), color: SERIES_COLORS[index], values: state.result.meses.map((row) => row[field][person])}));
+  return ["el", "ella"].map((person, index) => ({id: person, label: personName(person), color: SERIES_COLORS[index], values: state.result.meses.map((row) => row[field]?.[person] ?? null)}));
 }
 
 function markedPayments(row) {
@@ -472,7 +509,7 @@ function markedPayments(row) {
 function selectedRow() { return state.result.meses.find((m) => m.mes === state.selected) || state.result.meses[0]; }
 
 function delta(current, previous) {
-  if (previous === undefined) return "";
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return "";
   const difference = current - previous;
   if (difference === 0) return "";
   return `<span class="${difference < 0 ? "negative" : "positive"}">${difference > 0 ? "+" : ""}${eur(difference)}</span>`;
@@ -490,8 +527,8 @@ function renderResults() {
   $("#period-label").textContent = `${monthLabel(rows[0].mes, true)} — ${monthLabel(rows.at(-1).mes, true)}`;
   const selector = $("#selected-month");
   selector.innerHTML = rows.map((m) => `<option value="${m.mes}" ${m.mes === row.mes ? "selected" : ""}>${monthLabel(m.mes)}</option>`).join("");
-  $("#kpis").innerHTML = stat("Margen de " + personName("el"), row.flujo_libre_centimos_eur.el, "theme-a", reference?.flujo_libre_centimos_eur.el, "")
-    + stat("Margen de " + personName("ella"), row.flujo_libre_centimos_eur.ella, "theme-b", reference?.flujo_libre_centimos_eur.ella, "")
+  $("#kpis").innerHTML = stat("Margen de " + personName("el"), row.flujo_libre_centimos_eur?.el, "theme-a", reference?.flujo_libre_centimos_eur?.el, "")
+    + stat("Margen de " + personName("ella"), row.flujo_libre_centimos_eur?.ella, "theme-b", reference?.flujo_libre_centimos_eur?.ella, "")
     + stat("Margen del hogar", row.hogar.flujo_libre_centimos_eur, "theme-total", reference?.hogar.flujo_libre_centimos_eur, `Saldo: ${eur(row.hogar.saldo_final_centimos_eur)}`);
   renderChart();
   renderInsight(row);
@@ -503,12 +540,18 @@ function renderResults() {
 }
 
 function renderInsight(row) {
-  const negative = Object.values(row.necesita_financiacion).some(Boolean);
+  if (!row.flujo_libre_centimos_eur) {
+    $("#insight").className = "warning-note";
+    $("#insight").textContent = `Déficit presupuestario · ${eur(row.presupuesto?.deficit_centimos_eur)} por cubrir`;
+    $("#insight").hidden = false;
+    return;
+  }
+  const negative = Object.values(row.necesita_financiacion || {}).some(Boolean);
   const spendingSavings = Object.values(row.flujo_libre_centimos_eur).some((n) => n < 0);
   const operation = state.result.operativa?.meses.find((item) => item.mes === row.mes);
-  const compensation = (operation?.compensacion_pendiente_centimos_eur || row.compensacion_neta_centimos_eur).el;
+  const compensation = (operation?.compensacion_pendiente_centimos_eur || row.compensacion_neta_centimos_eur)?.el ?? 0;
   const transfer = compensation === 0 ? "" : compensation > 0 ? `${personName("ella")} → ${personName("el")} · ${eur(compensation)}` : `${personName("el")} → ${personName("ella")} · ${eur(-compensation)}`;
-  const needsCash = ["el", "ella"].filter((person) => row.necesita_financiacion[person]).map((person) => personName(person));
+  const needsCash = ["el", "ella"].filter((person) => row.necesita_financiacion?.[person]).map((person) => personName(person));
   $("#insight").className = negative || spendingSavings ? "warning-note" : "info-note";
   $("#insight").textContent = [negative ? `Saldo negativo: ${needsCash.join(" y ")}` : spendingSavings ? "Se usa saldo previo" : "", (operation && transfer ? "Pendiente · " : "") + transfer].filter(Boolean).join(" · ");
   $("#insight").hidden = !$("#insight").textContent;
@@ -522,17 +565,21 @@ function renderComparison() {
   }
   const samePeriod = state.result.inicio === state.reference.result.inicio && state.result.fin === state.reference.result.fin;
   $("#comparison").innerHTML = `<div class="comparison-header"><h3>Saldo final</h3><span class="chip">${escapeHtml(state.reference.escenario.nombre || RULES[state.reference.escenario.regla])}</span></div>${!samePeriod ? `<p class="warning-note">Períodos distintos</p>` : ""}<div class="comparison-grid">${[[personName("el"), "el"], [personName("ella"), "ella"], ["Hogar", "hogar"]].map(([name, key]) => {
-    const amount = key === "hogar" ? current.hogar.saldo_final_centimos_eur : current.saldo_final_centimos_eur[key];
-    const before = key === "hogar" ? reference.hogar.saldo_final_centimos_eur : reference.saldo_final_centimos_eur[key];
+    const amount = key === "hogar" ? current.hogar.saldo_final_centimos_eur : current.saldo_final_centimos_eur?.[key];
+    const before = key === "hogar" ? reference.hogar.saldo_final_centimos_eur : reference.saldo_final_centimos_eur?.[key];
     return `<div class="comparison-item"><span class="muted">${escapeHtml(name)}</span><strong>${eur(amount)}</strong><small>${delta(amount, before)}</small></div>`;
   }).join("")}</div>`;
 }
 
 function renderTable(rows) {
-  $("#monthly-table").innerHTML = `<thead><tr><th scope="col">Mes</th><th scope="col">Ingreso · ${escapeHtml(personName("el"))}</th><th scope="col">Ingreso · ${escapeHtml(personName("ella"))}</th><th scope="col">Pagos en cuotas</th><th scope="col">Margen · ${escapeHtml(personName("el"))}</th><th scope="col">Margen · ${escapeHtml(personName("ella"))}</th><th scope="col">Saldo hogar</th></tr></thead><tbody>${rows.map((row) => `<tr data-month="${row.mes}" class="${row.mes === state.selected ? "row-selected" : ""}"><th scope="row"><button class="table-row-button" type="button" data-month="${row.mes}" aria-label="Ver reparto de ${monthLabel(row.mes)}" ${row.mes === state.selected ? 'aria-current="true"' : ""}>${monthLabel(row.mes, true)}</button></th><td>${eur(row.ingresos_reales_centimos_eur.el)}</td><td>${eur(row.ingresos_reales_centimos_eur.ella)}</td><td>${eur(row.cuotas_centimos_eur)}</td><td class="${row.flujo_libre_centimos_eur.el < 0 ? "negative" : "theme-a"}">${eur(row.flujo_libre_centimos_eur.el)}</td><td class="${row.flujo_libre_centimos_eur.ella < 0 ? "negative" : "theme-b"}">${eur(row.flujo_libre_centimos_eur.ella)}</td><td class="${row.hogar.saldo_final_centimos_eur < 0 ? "negative" : ""}">${eur(row.hogar.saldo_final_centimos_eur)}</td></tr>`).join("")}</tbody>`;
+  $("#monthly-table").innerHTML = `<thead><tr><th scope="col">Mes</th><th scope="col">Ingreso · ${escapeHtml(personName("el"))}</th><th scope="col">Ingreso · ${escapeHtml(personName("ella"))}</th><th scope="col">Pagos en cuotas</th><th scope="col">Margen · ${escapeHtml(personName("el"))}</th><th scope="col">Margen · ${escapeHtml(personName("ella"))}</th><th scope="col">Saldo hogar</th></tr></thead><tbody>${rows.map((row) => `<tr data-month="${row.mes}" class="${row.mes === state.selected ? "row-selected" : ""}"><th scope="row"><button class="table-row-button" type="button" data-month="${row.mes}" aria-label="Ver reparto de ${monthLabel(row.mes)}" ${row.mes === state.selected ? 'aria-current="true"' : ""}>${monthLabel(row.mes, true)}</button></th><td>${eur(row.ingresos_reales_centimos_eur.el)}</td><td>${eur(row.ingresos_reales_centimos_eur.ella)}</td><td>${eur(row.cuotas_centimos_eur)}</td><td class="${row.flujo_libre_centimos_eur?.el < 0 ? "negative" : "theme-a"}">${eur(row.flujo_libre_centimos_eur?.el)}</td><td class="${row.flujo_libre_centimos_eur?.ella < 0 ? "negative" : "theme-b"}">${eur(row.flujo_libre_centimos_eur?.ella)}</td><td class="${row.hogar.saldo_final_centimos_eur < 0 ? "negative" : ""}">${eur(row.hogar.saldo_final_centimos_eur)}</td></tr>`).join("")}</tbody>`;
 }
 
 function renderDetails(row) {
+  if (!row.asignacion_comunes_centimos_eur) {
+    $("#month-detail").innerHTML = `<p class="warning-note">${escapeHtml(row.presupuesto?.mensaje || "Recursos insuficientes para repartir los gastos comunes.")}</p>`;
+    return;
+  }
   const metrics = [
     ["Ingresos reales", row.ingresos_reales_centimos_eur], ["Ingresos para repartir", row.ingresos_considerados_centimos_eur],
     ["Asignado", row.pagos_personales_centimos_eur], ["Por regla general", row.asignacion_comunes_centimos_eur],
@@ -549,7 +596,7 @@ function renderDetails(row) {
     const common = payment.importe_comun_centimos_eur ?? 0;
     return common ? `${personName(payment.persona)} · común ${eur(common, 2)}` : personName(payment.persona);
   };
-  $("#month-detail").innerHTML = `<p class="muted">${monthLabel(row.mes)} · ${escapeHtml(RULES[state.escenario.regla])}</p><div class="table-wrap"><table class="detail-table"><thead><tr><th scope="col">Concepto</th><th scope="col">${escapeHtml(personName("el"))}</th><th scope="col">${escapeHtml(personName("ella"))}</th></tr></thead><tbody>${metrics.map(([label, values]) => `<tr><th scope="row">${label}</th><td>${eur(values.el, 2)}</td><td>${eur(values.ella, 2)}</td></tr>`).join("")}</tbody></table></div><details class="payment-detail"><summary>Pagos (${row.pagos.length})</summary><div class="table-wrap"><table><thead><tr><th>Pago</th><th>Pagado por</th><th>EUR</th><th>Reparto</th></tr></thead><tbody>${row.pagos.map((payment) => `<tr><th scope="row">${escapeHtml(payment.concepto || payment.id)}</th><td>${escapeHtml(personName(payment.pagador))}</td><td>${eur(payment.importe_centimos_eur, 2)}</td><td>${escapeHtml(paymentSplit(payment))}</td></tr>`).join("")}</tbody></table></div></details>`;
+  $("#month-detail").innerHTML = `<p class="muted">${monthLabel(row.mes)} · ${escapeHtml(RULES[state.escenario.regla])}</p><div class="table-wrap"><table class="detail-table"><thead><tr><th scope="col">Concepto</th><th scope="col">${escapeHtml(personName("el"))}</th><th scope="col">${escapeHtml(personName("ella"))}</th></tr></thead><tbody>${metrics.map(([label, values]) => `<tr><th scope="row">${label}</th><td>${eur(values?.el, 2)}</td><td>${eur(values?.ella, 2)}</td></tr>`).join("")}</tbody></table></div><details class="payment-detail"><summary>Pagos (${row.pagos.length})</summary><div class="table-wrap"><table><thead><tr><th>Pago</th><th>Pagado por</th><th>EUR</th><th>Reparto</th></tr></thead><tbody>${row.pagos.map((payment) => `<tr><th scope="row">${escapeHtml(payment.concepto || payment.id)}</th><td>${escapeHtml(personName(payment.pagador))}</td><td>${eur(payment.importe_centimos_eur, 2)}</td><td>${escapeHtml(paymentSplit(payment))}</td></tr>`).join("")}</tbody></table></div></details>`;
 }
 
 function renderCommitments() {
@@ -577,14 +624,15 @@ function renderChart() {
   $("#chart-caption").textContent = !personal && state.chartView === "etiquetas" ? "EUR · un gasto puede aparecer en varias etiquetas" : personal && state.metric !== "saldo" ? "EUR · antes de ahorro" : "EUR";
   if (!series.length) { $("#chart").innerHTML = '<p class="empty-state">Sin series seleccionadas.</p>'; return; }
   const width = Math.max(320, $("#chart").clientWidth || 900), height = 300, left = width < 600 ? 70 : 84, right = 36, top = 32, bottom = 44;
-  const values = series.flatMap((item) => item.values);
+  const values = series.flatMap((item) => item.values).filter(Number.isFinite);
   let min = Math.min(0, ...values), max = Math.max(0, ...values);
   const pad = (max - min || 10000) * .12;
   max += pad;
   if (min < 0) min -= pad;
   const x = (i) => rows.length === 1 ? (left + width - right) / 2 : left + i / (rows.length - 1) * (width - left - right);
   const y = (value) => top + (max - value) / (max - min) * (height - top - bottom);
-  const line = (item) => item.values.map((value, i) => `${i ? "L" : "M"}${x(i).toFixed(2)},${y(value).toFixed(2)}`).join(" ");
+  const line = (item) => item.values.map((value, i) => Number.isFinite(value)
+    ? `${i && Number.isFinite(item.values[i - 1]) ? "L" : "M"}${x(i).toFixed(2)},${y(value).toFixed(2)}` : "").join(" ");
   let grid = "";
   for (let i = 0; i <= 4; i++) {
     const value = min + (max - min) * i / 4;
@@ -598,17 +646,149 @@ function renderChart() {
     const payments = markedPayments(row);
     return payments.length ? `<g class="chart-expense-mark"><title>${escapeHtml(payments.map((payment) => `${payment.concepto}: ${eur(payment.importe_centimos_eur)}`).join("; "))}</title><text x="${x(i)}" y="19" text-anchor="middle" class="chart-axis" data-month="${row.mes}">◆</text></g>` : "";
   }).join("");
-  $("#chart").innerHTML = `<svg viewBox="0 0 ${width} ${height}" aria-label="${personal ? state.metric === "saldo" ? "Saldo acumulado" : "Margen mensual" : "Gastos por " + state.chartView}" role="img">${grid}<line class="chart-zero" x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}"/>${series.map((item) => `<path d="${line(item)}" stroke="${item.color}" stroke-width="2.5" fill="none"/><circle cx="${x(selectedIndex)}" cy="${y(item.values[selectedIndex])}" r="5" fill="${item.color}"/>`).join("")}<line class="chart-selection" x1="${x(selectedIndex)}" x2="${x(selectedIndex)}" y1="${top}" y2="${height - bottom}"/>${labels}${hits}${markers}</svg>`;
+  $("#chart").innerHTML = `<svg viewBox="0 0 ${width} ${height}" aria-label="${personal ? state.metric === "saldo" ? "Saldo acumulado" : "Margen mensual" : "Gastos por " + state.chartView}" role="img">${grid}<line class="chart-zero" x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}"/>${series.map((item) => `<path d="${line(item)}" stroke="${item.color}" stroke-width="2.5" fill="none"/>${Number.isFinite(item.values[selectedIndex]) ? `<circle cx="${x(selectedIndex)}" cy="${y(item.values[selectedIndex])}" r="5" fill="${item.color}"/>` : ""}`).join("")}<line class="chart-selection" x1="${x(selectedIndex)}" x2="${x(selectedIndex)}" y1="${top}" y2="${height - bottom}"/>${labels}${hits}${markers}</svg>`;
 }
 
 function selectMonth(month) {
   if (!state.result?.meses.some((row) => row.mes === month)) return;
   state.selected = month;
   $("#chart-tooltip").hidden = true;
+  renderMovementList(true);
   renderResults();
 }
 
+function setGamma(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return;
+  state.escenario.regla = "progresivo";
+  state.escenario.gamma_por_mes ??= {};
+  state.escenario.gamma_por_mes[state.selected || state.caso.inicio] = String(number);
+  markEdited();
+  renderSharingControls();
+  scheduleCalculation();
+}
+
+function downloadFile(content, filename, type) {
+  const url = URL.createObjectURL(new Blob([content], {type}));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function currentPlanValid() {
+  return state.result && $("#controls").checkValidity() && $("#sharing-controls").checkValidity()
+    && $("#socialization-controls")?.checkValidity() !== false
+    && window.FinanzasProgresividad?.checkValidity() !== false
+    && window.FinanzasOperativa?.checkValidity() !== false
+    && $("#error").hidden && !document.body.classList.contains("calculating");
+}
+
+function saveMonth() {
+  if (!currentPlanValid()) { toast("Espera un cálculo válido antes de guardar el mes."); return; }
+  const module = window.FinanzasHistorial;
+  if (!module) return;
+  try {
+    state.history = module.upsert(state.history, module.createSnapshot(operativaContext()));
+    state.saveEnabled = true;
+    const saved = persist();
+    module.render(operativaContext());
+    if (saved) toast("Mes guardado.");
+  } catch (error) { toast(error.message || "No se pudo guardar el mes."); }
+}
+
+async function validateHistory(history, sequence = state.sequence, importSequence = state.importSequence) {
+  if (history === undefined) return [];
+  const module = window.FinanzasHistorial;
+  if (!module) throw new Error("No se pudo cargar el historial.");
+  const normalized = module.normalizeHistory(history);
+  const validated = [];
+  for (const snapshot of normalized) {
+    if (sequence !== state.sequence || importSequence !== state.importSequence) throw new DOMException("Importación cancelada", "AbortError");
+    const plan = await preparePlan(snapshot);
+    const result = await requestCalculation(plan.caso, plan.escenario);
+    const row = result.meses.find((item) => item.mes === snapshot.mes);
+    if (!row) throw new Error("El mes guardado está fuera de su presupuesto.");
+    validated.push({...snapshot, caso: plan.caso, escenario: plan.escenario, fila: row});
+  }
+  return validated;
+}
+
+async function activateHistoryPlan(plan, month) {
+  const sequence = state.sequence;
+  const importSequence = ++state.importSequence;
+  try {
+    const prepared = await preparePlan(plan);
+    const result = await requestCalculation(prepared.caso, prepared.escenario);
+    if (importSequence !== state.importSequence) return;
+    if (sequence !== state.sequence) { toast("Se conservan tus cambios más recientes. Vuelve a abrir el mes para cargarlo."); return; }
+    state.controller?.abort();
+    clearTimeout(state.timer);
+    state.sequence++;
+    state.caso = prepared.caso;
+    state.escenario = prepared.escenario;
+    state.result = result;
+    state.reference = null;
+    state.selected = month;
+    state.filter = "todos";
+    state.search = "";
+    state.undoMovement = null;
+    markEdited();
+    $("#error").hidden = true;
+    document.body.classList.remove("has-error", "calculating");
+    $("#status").textContent = "Listo";
+    renderControls();
+    renderResults();
+    persist();
+    setTab("records");
+  } catch (error) { toast(error.message || "No se pudo abrir el presupuesto."); }
+}
+
+function openMonth(month) {
+  const snapshot = state.history.find((item) => item.mes === month);
+  if (snapshot) return activateHistoryPlan(clone(snapshot), month);
+}
+
+function cloneMonth(month, target) {
+  const snapshot = state.history.find((item) => item.mes === month);
+  if (!snapshot) return;
+  try {
+    return activateHistoryPlan(window.FinanzasHistorial.cloneBudget(snapshot, target), target);
+  } catch (error) { toast(error.message); }
+}
+
+function exportCsv() {
+  if (!state.history.length) { toast("Guarda un mes para exportar el historial."); return; }
+  downloadFile(window.FinanzasHistorial.toCsv(state.history), "balances-finanzas.csv", "text/csv;charset=utf-8");
+}
+
 function handleControl(event) {
+  const category = event.target.closest("[data-expense-class]");
+  if (category) {
+    const movement = state.caso.movimientos[Number(category.dataset.expenseClass)];
+    const [kind, person] = category.value.split("_");
+    if (!movement || !["comun", "socializado", "personal"].includes(kind)) return;
+    if (person && !["el", "ella"].includes(person)) return;
+    movement.persona = kind === "comun" ? "compartido" : person || (movement.persona === "compartido" ? movement.pagador : movement.persona);
+    movement.reparto = "regla";
+    movement.porcentaje_compartido = kind === "comun" ? "100" : "0";
+    movement.descontar_antes_reparto = kind === "socializado";
+    markEdited();
+    renderAdjustments();
+    scheduleCalculation();
+    return;
+  }
+  const payment = event.target.closest("[data-payment-state]");
+  if (payment) {
+    const movement = state.caso.movimientos[Number(payment.dataset.paymentState)];
+    if (!movement || !["previsto", "pagado"].includes(payment.value)) return;
+    movement.estados_por_mes ??= {};
+    movement.estados_por_mes[state.selected || state.caso.inicio] = payment.value;
+    markEdited();
+    scheduleCalculation();
+    return;
+  }
   const shareToggle = event.target.closest("[data-share-toggle]");
   if (shareToggle) {
     state.caso.movimientos[Number(shareToggle.dataset.shareToggle)].porcentaje_compartido = shareToggle.checked ? "50" : "0";
@@ -691,7 +871,7 @@ function handleArrayActions(event) {
   if (add) {
     const type = add.dataset.addMovement;
     if (!Object.hasOwn(TYPES, type)) return;
-    const movement = {id: uniqueId(), concepto: type === "ingreso" ? "Nuevo ingreso" : "Nuevo gasto", tipo: type, persona: "el", pagador: "el", importe: "0.00", moneda: "EUR", fecha: state.caso.inicio + "-01", modalidad: "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: "0", reparto: "regla", porcentaje_el: "50", cuenta_id: "", grupo: "", etiquetas: [], marcar_grafico: false};
+    const movement = {id: uniqueId(), concepto: type === "ingreso" ? "Nuevo ingreso" : "Nuevo gasto", tipo: type, persona: "el", pagador: "el", importe: "0.00", moneda: "EUR", fecha: (state.selected || state.caso.inicio) + "-01", modalidad: "recurrente", intervalo_meses: 1, hasta: "", cuotas: 12, cuotas_pagadas: 0, importe_tipo: "total", extra: false, porcentaje_compartido: "0", reparto: "regla", porcentaje_el: "50", cuenta_id: "", grupo: "", etiquetas: [], marcar_grafico: false, estado: "previsto", estados_por_mes: {}};
     if (type === "gasto") movement.descontar_antes_reparto = false;
     state.caso.movimientos.push(movement);
     state.activeMovement = movement.id;
@@ -735,11 +915,12 @@ async function importPlan(file) {
   const sequence = state.sequence;
   const importSequence = ++state.importSequence;
   try {
-    if (file.size > 250000) throw new Error("El archivo es demasiado grande. Usa un plan JSON de menos de 250 KB.");
+    if (file.size > 8000000) throw new Error("El archivo es demasiado grande. Usa un plan JSON de menos de 8 MB.");
     const imported = JSON.parse(await file.text());
     if (!imported.caso || !imported.escenario) throw new Error("Usa un archivo exportado desde este simulador.");
     const plan = await preparePlan(imported);
     const result = await requestCalculation(plan.caso, plan.escenario);
+    const history = await validateHistory(imported.historia, sequence, importSequence);
     let reference = null;
     if (imported.reference) {
       const previous = await preparePlan(imported.reference);
@@ -757,6 +938,7 @@ async function importPlan(file) {
     state.escenario = plan.escenario;
     state.result = result;
     state.reference = reference;
+    state.history = history;
     state.edited = !plan.caso.es_ficticio;
     state.saveEnabled = true;
     state.selected = result.meses[0].mes;
@@ -783,6 +965,7 @@ async function restoreSavedPlan() {
   try {
     const plan = await preparePlan(saved);
     const result = await requestCalculation(plan.caso, plan.escenario);
+    const history = await validateHistory(saved.historia, sequence, importSequence);
     let reference = null;
     if (saved.reference) {
       try {
@@ -798,6 +981,7 @@ async function restoreSavedPlan() {
     state.escenario = plan.escenario;
     state.result = result;
     state.reference = reference;
+    state.history = history;
     state.edited = !plan.caso.es_ficticio;
     state.saveEnabled = true;
     state.selected = result.meses[0].mes;
@@ -824,6 +1008,7 @@ async function resetPlan() {
   state.escenario = plan.escenario;
   state.result = null;
   state.reference = null;
+  state.history = [];
   state.selected = null;
   state.edited = false;
   state.saveEnabled = false;
@@ -836,7 +1021,7 @@ async function resetPlan() {
   $("#data-mode").textContent = "Vacío";
   $("#restore-plan").hidden = !savedPlan();
   renderControls();
-  setTab("records");
+  setTab("dashboard");
   await calculate();
 }
 
@@ -851,7 +1036,14 @@ function bindEvents() {
   }
   window.FinanzasOperativa?.bind(operativaContext());
   window.FinanzasEquivalencia?.bind(operativaContext());
-  $("#sharing-month").addEventListener("change", (event) => selectMonth(event.target.value));
+  window.FinanzasProgresividad?.bind(operativaContext());
+  window.FinanzasHistorial?.bind(operativaContext());
+  $("#theme-toggle").addEventListener("click", () => {
+    const dark = document.documentElement?.dataset.theme !== "dark";
+    applyTheme(dark ? "dark" : "light");
+    try { localStorage.setItem("finanzas-tema", dark ? "dark" : "light"); } catch { /* La preferencia se mantiene durante esta sesión. */ }
+    window.FinanzasProgresividad?.render(operativaContext());
+  });
   $("#adjustments-content").addEventListener("submit", (event) => event.preventDefault());
   $("#adjustments-content").addEventListener("input", (event) => {
     if (event.target.closest("[data-adjust-index]")) handleAdjustment(event);
@@ -915,22 +1107,25 @@ function bindEvents() {
   $("#restore-plan").addEventListener("click", restoreSavedPlan);
   $("#reset").addEventListener("click", resetPlan);
   $("#download").addEventListener("click", () => {
-    if (!$("#controls").checkValidity() || !$("#sharing-controls").checkValidity() || $("#socialization-controls")?.checkValidity() === false || window.FinanzasOperativa?.checkValidity() === false || !$("#error").hidden || document.body.classList.contains("calculating")) { toast("Revisa los campos antes de exportar."); return; }
-    const blob = new Blob([JSON.stringify(exportablePlan(), null, 2)], {type: "application/json"});
-    const anchor = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    anchor.href = url;
-    anchor.download = "plan-finanzas.json";
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (!currentPlanValid()) { toast("Revisa los campos antes de exportar."); return; }
+    downloadFile(JSON.stringify(exportablePlan(), null, 2), "plan-finanzas.json", "application/json");
     toast("Exportado.");
   });
   $("#import-file").addEventListener("change", (event) => importPlan(event.target.files[0]));
   window.addEventListener?.("resize", () => { if (state.result) renderChart(); });
 }
 
+function applyTheme(theme) {
+  if (document.documentElement) document.documentElement.dataset.theme = theme;
+  $("#theme-toggle").textContent = theme === "dark" ? "Claro" : "Oscuro";
+  $("#theme-toggle").setAttribute("aria-label", theme === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro");
+}
+
 async function initialize() {
   try {
+    let theme;
+    try { theme = localStorage.getItem("finanzas-tema"); } catch { /* Usar la preferencia del equipo. */ }
+    applyTheme(theme === "dark" || theme === "light" ? theme : window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     state.initial = emptyPlan();
     bindEvents();
     await resetPlan();

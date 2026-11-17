@@ -77,6 +77,7 @@ def preparar_operativa(caso, movimientos):
             raise ValueError("Hay id de transferencia duplicado: " + identificador)
         usados.add(identificador)
         m._texto(transferencia.get("concepto"), "concepto de transferencia")
+        transferencia["estado"], transferencia["estados_por_mes"] = m._estados(transferencia, identificador)
         origen, destino = transferencia.get("origen"), transferencia.get("destino")
         if not isinstance(origen, str) or not isinstance(destino, str) or origen not in por_id or destino not in por_id:
             raise ValueError("Las cuentas de origen y destino de la transferencia deben existir")
@@ -119,7 +120,8 @@ def preparar_operativa(caso, movimientos):
             "_fecha": transferencia["_fecha"], "_cantidad": transferencia["_cantidad"],
             "_porcentaje": m.Decimal(100) if conjunta else m.Decimal(0),
             "grupo": "Comisiones", "etiquetas": ["Cambio de divisa"], "origen_tipo": "comision_cambio",
-            "transferencia_id": transferencia["id"], "_comision_cambio": True}
+            "transferencia_id": transferencia["id"], "_comision_cambio": True,
+            "estado": transferencia["estado"], "estados_por_mes": dict(transferencia["estados_por_mes"])}
         if conjunta:
             comision.update(_reparto="fijo", _porcentaje_el=cuenta_origen["_porcentaje_el"])
         comisiones.append(comision)
@@ -135,7 +137,7 @@ def saldos_iniciales_cuentas(caso, preparado):
     return total
 
 
-def simular_operativa(caso, preparado, calendario):
+def simular_operativa(caso, preparado, calendario, solo_pagados=False):
     cuentas, por_id = preparado["cuentas"], preparado["por_id"]
     saldos = {cuenta["id"]: cuenta["_saldo"] for cuenta in cuentas}
     caja_libre = {p: m._importe(caso["personas"][p]["saldo_inicial_eur"], "EUR", "saldo sin cuenta", negativo=True) for p in m.PERSONAS}
@@ -188,6 +190,8 @@ def simular_operativa(caso, preparado, calendario):
                             _equivalente=equivalente if ingreso else -equivalente)
             eventos.append(registro)
         for transferencia, fecha in transferencias[mes]:
+            if solo_pagados and transferencia["estados_por_mes"].get(mes, transferencia["estado"]) != "pagado":
+                continue
             origen, destino = transferencia["origen"], transferencia["destino"]
             importe = transferencia["_importe"]
             moneda_origen, moneda_destino = por_id[origen]["moneda"], por_id[destino]["moneda"]
@@ -239,10 +243,10 @@ def simular_operativa(caso, preparado, calendario):
 
 def incorporar_compensaciones(operativa, meses):
     for caja, mes in zip(operativa["meses"], meses):
-        caja["compensacion_mes_centimos_eur"] = dict(mes["compensacion_neta_centimos_eur"])
+        caja["compensacion_mes_centimos_eur"] = dict(mes["compensacion_neta_centimos_eur"]) if mes["compensacion_neta_centimos_eur"] is not None else None
         # Comparar posiciones evita cobrar otra vez un gasto ya financiado en
         # una cuenta conjunta. Las transferencias planificadas y las diferencias
         # pendientes de meses anteriores ya están incluidas en la caja real.
         caja["compensacion_pendiente_centimos_eur"] = {
             persona: mes["saldo_final_centimos_eur"][persona] - caja["posicion_real_centimos_eur"][persona]
-            for persona in m.PERSONAS}
+            for persona in m.PERSONAS} if mes["saldo_final_centimos_eur"] is not None else None
